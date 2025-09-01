@@ -10,6 +10,13 @@ import json
 import os
 import time
 import re
+import pty
+import select
+import termios
+import struct
+import fcntl
+import threading
+import queue
 from datetime import datetime
 
 import pwnagotchi
@@ -19,6 +26,133 @@ from pwnagotchi.ui.components import LabeledValue, Text
 from pwnagotchi.ui.view import BLACK
 
 from flask import render_template_string, request, jsonify, abort
+
+
+class WebTerminal:
+    """Web-based terminal emulator using pty"""
+    
+    def __init__(self):
+        self.terminals = {}  # Store active terminal sessions
+        self.terminal_counter = 0
+    
+    def create_terminal(self):
+        """Create a new terminal session"""
+        try:
+            # Create a new pseudo-terminal
+            master_fd, slave_fd = pty.openpty()
+            
+            # Start shell process
+            pid = os.fork()
+            if pid == 0:
+                # Child process - become the shell
+                os.setsid()
+                os.dup2(slave_fd, 0)  # stdin
+                os.dup2(slave_fd, 1)  # stdout
+                os.dup2(slave_fd, 2)  # stderr
+                os.close(master_fd)
+                os.close(slave_fd)
+                
+                # Start bash shell
+                os.execv('/bin/bash', ['/bin/bash', '-l'])
+            else:
+                # Parent process
+                os.close(slave_fd)
+                
+                # Make master_fd non-blocking
+                fcntl.fcntl(master_fd, fcntl.F_SETFL, os.O_NONBLOCK)
+                
+                terminal_id = f"term_{self.terminal_counter}"
+                self.terminal_counter += 1
+                
+                self.terminals[terminal_id] = {
+                    'master_fd': master_fd,
+                    'pid': pid,
+                    'output_queue': queue.Queue(),
+                    'active': True
+                }
+                
+                # Start output reader thread
+                threading.Thread(target=self._read_output, args=(terminal_id,), daemon=True).start()
+                
+                return terminal_id
+                
+        except Exception as e:
+            logging.error(f"[SSH] Error creating terminal: {e}")
+            return None
+    
+    def _read_output(self, terminal_id):
+        """Read output from terminal in background thread"""
+        terminal = self.terminals.get(terminal_id)
+        if not terminal:
+            return
+            
+        master_fd = terminal['master_fd']
+        output_queue = terminal['output_queue']
+        
+        while terminal['active']:
+            try:
+                ready, _, _ = select.select([master_fd], [], [], 0.1)
+                if ready:
+                    data = os.read(master_fd, 1024)
+                    if data:
+                        output_queue.put(data.decode('utf-8', errors='ignore'))
+                    else:
+                        break
+            except (OSError, IOError):
+                break
+        
+        terminal['active'] = False
+    
+    def write_input(self, terminal_id, data):
+        """Write input to terminal"""
+        terminal = self.terminals.get(terminal_id)
+        if terminal and terminal['active']:
+            try:
+                os.write(terminal['master_fd'], data.encode('utf-8'))
+                return True
+            except (OSError, IOError):
+                terminal['active'] = False
+        return False
+    
+    def read_output(self, terminal_id):
+        """Read available output from terminal"""
+        terminal = self.terminals.get(terminal_id)
+        if not terminal:
+            return ""
+            
+        output = ""
+        try:
+            while not terminal['output_queue'].empty():
+                output += terminal['output_queue'].get_nowait()
+        except queue.Empty:
+            pass
+        
+        return output
+    
+    def resize_terminal(self, terminal_id, rows, cols):
+        """Resize terminal window"""
+        terminal = self.terminals.get(terminal_id)
+        if terminal and terminal['active']:
+            try:
+                # Set terminal size
+                winsize = struct.pack('HHHH', rows, cols, 0, 0)
+                fcntl.ioctl(terminal['master_fd'], termios.TIOCSWINSZ, winsize)
+                return True
+            except (OSError, IOError):
+                pass
+        return False
+    
+    def close_terminal(self, terminal_id):
+        """Close terminal session"""
+        terminal = self.terminals.get(terminal_id)
+        if terminal:
+            terminal['active'] = False
+            try:
+                os.close(terminal['master_fd'])
+                os.kill(terminal['pid'], 9)  # Force kill the shell process
+            except (OSError, ProcessLookupError):
+                pass
+            del self.terminals[terminal_id]
 
 
 class SSH(plugins.Plugin):
@@ -33,13 +167,15 @@ class SSH(plugins.Plugin):
             'display_on_screen': True,
             'ssh_x_coord': 160,
             'ssh_y_coord': 66,
-            'connection_timeout': 30
+            'connection_timeout': 30,
+            'enable_web_terminal': True
         }
         self.ssh_status = False
         self.active_connections = 0
         self.authorized_keys_path = "/root/.ssh/authorized_keys"
         self.ssh_config_path = "/etc/ssh/sshd_config"
         self.ready = False
+        self.web_terminal = WebTerminal()
 
     def on_loaded(self):
         """Plugin loaded callback"""
@@ -119,6 +255,8 @@ class SSH(plugins.Plugin):
                 if getattr(request, 'method', 'GET') == 'POST':
                     return self.handle_key_management(request)
                 return self.render_keys_page()
+            elif path == "terminal":
+                return self.render_terminal_page()
             elif path == "api/status":
                 return jsonify({
                     'status': self.check_ssh_status(),
@@ -132,6 +270,30 @@ class SSH(plugins.Plugin):
                 return jsonify({'success': success})
             elif path == "api/connections":
                 return jsonify(self.get_active_connections())
+            elif path == "api/terminal/create":
+                terminal_id = self.web_terminal.create_terminal()
+                return jsonify({'terminal_id': terminal_id, 'success': terminal_id is not None})
+            elif path.startswith("api/terminal/") and "/input" in path:
+                terminal_id = path.split("/")[2]
+                data = request.get_json() or {}
+                input_data = data.get('input', '')
+                success = self.web_terminal.write_input(terminal_id, input_data)
+                return jsonify({'success': success})
+            elif path.startswith("api/terminal/") and "/output" in path:
+                terminal_id = path.split("/")[2]
+                output = self.web_terminal.read_output(terminal_id)
+                return jsonify({'output': output})
+            elif path.startswith("api/terminal/") and "/resize" in path:
+                terminal_id = path.split("/")[2]
+                data = request.get_json() or {}
+                rows = data.get('rows', 24)
+                cols = data.get('cols', 80)
+                success = self.web_terminal.resize_terminal(terminal_id, rows, cols)
+                return jsonify({'success': success})
+            elif path.startswith("api/terminal/") and "/close" in path:
+                terminal_id = path.split("/")[2]
+                self.web_terminal.close_terminal(terminal_id)
+                return jsonify({'success': True})
             elif path == "test":
                 return "<html><body><h1>SSH Plugin Test</h1><p>Plugin working!</p></body></html>"
         except Exception as e:
@@ -255,6 +417,7 @@ class SSH(plugins.Plugin):
             <a href="/plugins/ssh/">Dashboard</a>
             <a href="/plugins/ssh/config">Configuration</a>
             <a href="/plugins/ssh/keys">SSH Keys</a>
+            <a href="/plugins/ssh/terminal">Web Terminal</a>
         </div>
 
         <div class="status {{ status_class }}">
@@ -289,6 +452,7 @@ class SSH(plugins.Plugin):
         <h3>🔧 Quick Actions</h3>
         <button class="button btn-primary" onclick="location.href='/plugins/ssh/config'">Configure SSH</button>
         <button class="button btn-secondary" onclick="location.href='/plugins/ssh/keys'">Manage Keys</button>
+        <button class="button btn-primary" onclick="location.href='/plugins/ssh/terminal'">Web Terminal</button>
         
         <div style="margin-top: 30px; padding: 15px; background: #e9ecef; border-radius: 4px;">
             <h4>📋 SSH Connection Info</h4>
@@ -470,6 +634,302 @@ class SSH(plugins.Plugin):
             keys=keys,
             key_count=len(keys)
         )
+
+    def render_terminal_page(self):
+        """Render web terminal page"""
+        template = """
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Web Terminal - {{ pwnagotchi_name }}</title>
+    <meta charset="utf-8">
+    <style>
+        body { 
+            font-family: monospace; 
+            margin: 0; 
+            padding: 20px; 
+            background: #f0f0f0; 
+        }
+        .container { 
+            max-width: 1200px; 
+            margin: 0 auto; 
+            background: white; 
+            padding: 20px; 
+            border-radius: 8px; 
+        }
+        .nav { 
+            margin: 20px 0; 
+        }
+        .nav a { 
+            margin-right: 15px; 
+            text-decoration: none; 
+            color: #007bff; 
+        }
+        .terminal-container {
+            background: #1e1e1e;
+            border: 1px solid #333;
+            border-radius: 4px;
+            margin: 20px 0;
+            padding: 0;
+            height: 500px;
+            position: relative;
+        }
+        .terminal-header {
+            background: #2d2d2d;
+            color: #fff;
+            padding: 8px 15px;
+            border-bottom: 1px solid #333;
+            font-size: 12px;
+        }
+        .terminal-controls {
+            margin: 10px 0;
+        }
+        .button { 
+            padding: 8px 16px; 
+            margin: 4px; 
+            border: none; 
+            border-radius: 4px; 
+            cursor: pointer; 
+        }
+        .btn-primary { 
+            background: #007bff; 
+            color: white; 
+        }
+        .btn-danger { 
+            background: #dc3545; 
+            color: white; 
+        }
+        .btn-secondary { 
+            background: #6c757d; 
+            color: white; 
+        }
+        #terminal {
+            width: 100%;
+            height: 460px;
+            padding: 15px;
+            box-sizing: border-box;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            background: #1e1e1e;
+            color: #00ff00;
+            border: none;
+            outline: none;
+            resize: none;
+            overflow-y: auto;
+        }
+        .status {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 4px;
+        }
+        .connected {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .disconnected {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>💻 Web Terminal</h1>
+        
+        <div class="nav">
+            <a href="/plugins/ssh/">Dashboard</a>
+            <a href="/plugins/ssh/config">Configuration</a>
+            <a href="/plugins/ssh/keys">SSH Keys</a>
+            <a href="/plugins/ssh/terminal">Web Terminal</a>
+        </div>
+
+        <div id="status" class="status disconnected">
+            <strong>Status:</strong> Disconnected
+        </div>
+
+        <div class="terminal-controls">
+            <button id="connectBtn" class="button btn-primary">Connect Terminal</button>
+            <button id="disconnectBtn" class="button btn-danger" disabled>Disconnect</button>
+            <button id="clearBtn" class="button btn-secondary" disabled>Clear</button>
+        </div>
+
+        <div class="terminal-container">
+            <div class="terminal-header">
+                Web Terminal - Type commands and press Enter
+            </div>
+            <textarea id="terminal" placeholder="Click 'Connect Terminal' to start a shell session..." readonly></textarea>
+        </div>
+
+        <div style="margin-top: 20px; padding: 15px; background: #e9ecef; border-radius: 4px;">
+            <h4>📋 Terminal Info</h4>
+            <p><strong>Shell:</strong> /bin/bash</p>
+            <p><strong>Features:</strong> Command history, tab completion, colors</p>
+            <p><strong>Tips:</strong> Use 'clear' to clear screen, 'exit' to close session</p>
+        </div>
+    </div>
+
+    <script>
+        let terminalId = null;
+        let connected = false;
+        let pollInterval = null;
+        
+        const terminal = document.getElementById('terminal');
+        const status = document.getElementById('status');
+        const connectBtn = document.getElementById('connectBtn');
+        const disconnectBtn = document.getElementById('disconnectBtn');
+        const clearBtn = document.getElementById('clearBtn');
+        
+        // Connect to terminal
+        connectBtn.addEventListener('click', async () => {
+            try {
+                const response = await fetch('/plugins/ssh/api/terminal/create', {
+                    method: 'POST'
+                });
+                const data = await response.json();
+                
+                if (data.success && data.terminal_id) {
+                    terminalId = data.terminal_id;
+                    connected = true;
+                    updateStatus('Connected', true);
+                    enableControls();
+                    startPolling();
+                    terminal.value = 'Terminal connected. Type commands below:\\n\\n';
+                    terminal.focus();
+                } else {
+                    alert('Failed to create terminal session');
+                }
+            } catch (error) {
+                alert('Error connecting to terminal: ' + error.message);
+            }
+        });
+        
+        // Disconnect terminal
+        disconnectBtn.addEventListener('click', async () => {
+            if (terminalId) {
+                try {
+                    await fetch(`/plugins/ssh/api/terminal/${terminalId}/close`, {
+                        method: 'POST'
+                    });
+                } catch (error) {
+                    console.error('Error closing terminal:', error);
+                }
+            }
+            disconnect();
+        });
+        
+        // Clear terminal
+        clearBtn.addEventListener('click', () => {
+            terminal.value = '';
+        });
+        
+        // Handle keyboard input
+        terminal.addEventListener('keydown', async (e) => {
+            if (!connected || !terminalId) return;
+            
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                const lines = terminal.value.split('\\n');
+                const currentLine = lines[lines.length - 1];
+                
+                // Send the current line as input
+                try {
+                    await fetch(`/plugins/ssh/api/terminal/${terminalId}/input`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({
+                            input: currentLine + '\\n'
+                        })
+                    });
+                } catch (error) {
+                    console.error('Error sending input:', error);
+                }
+            }
+        });
+        
+        // Poll for output
+        async function pollOutput() {
+            if (!connected || !terminalId) return;
+            
+            try {
+                const response = await fetch(`/plugins/ssh/api/terminal/${terminalId}/output`);
+                const data = await response.json();
+                
+                if (data.output) {
+                    terminal.value += data.output;
+                    terminal.scrollTop = terminal.scrollHeight;
+                }
+            } catch (error) {
+                console.error('Error polling output:', error);
+                disconnect();
+            }
+        }
+        
+        function startPolling() {
+            pollInterval = setInterval(pollOutput, 100); // Poll every 100ms
+        }
+        
+        function stopPolling() {
+            if (pollInterval) {
+                clearInterval(pollInterval);
+                pollInterval = null;
+            }
+        }
+        
+        function updateStatus(text, isConnected) {
+            status.innerHTML = `<strong>Status:</strong> ${text}`;
+            status.className = `status ${isConnected ? 'connected' : 'disconnected'}`;
+        }
+        
+        function enableControls() {
+            connectBtn.disabled = true;
+            disconnectBtn.disabled = false;
+            clearBtn.disabled = false;
+            terminal.readOnly = false;
+        }
+        
+        function disableControls() {
+            connectBtn.disabled = false;
+            disconnectBtn.disabled = true;
+            clearBtn.disabled = true;
+            terminal.readOnly = true;
+        }
+        
+        function disconnect() {
+            connected = false;
+            terminalId = null;
+            updateStatus('Disconnected', false);
+            disableControls();
+            stopPolling();
+        }
+        
+        // Auto-resize terminal
+        window.addEventListener('resize', () => {
+            if (connected && terminalId) {
+                const rows = Math.floor(terminal.clientHeight / 20);
+                const cols = Math.floor(terminal.clientWidth / 8);
+                
+                fetch(`/plugins/ssh/api/terminal/${terminalId}/resize`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        rows: rows,
+                        cols: cols
+                    })
+                }).catch(console.error);
+            }
+        });
+    </script>
+</body>
+</html>
+        """
+        
+        return render_template_string(template, pwnagotchi_name=pwnagotchi.name())
 
     def get_authorized_keys(self):
         """Get list of authorized SSH keys"""
