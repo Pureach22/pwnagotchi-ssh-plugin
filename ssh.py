@@ -43,13 +43,17 @@ class WebTerminal:
             if platform.system() == "Windows":
                 # Windows development mode - use subprocess
                 import subprocess
+                
+                # Use cmd.exe instead of PowerShell for better compatibility
                 process = subprocess.Popen(
-                    ['powershell.exe'],
+                    ['cmd.exe'],
                     stdin=subprocess.PIPE,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
                     text=True,
-                    bufsize=0
+                    bufsize=0,
+                    universal_newlines=True,
+                    creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if hasattr(subprocess, 'CREATE_NEW_PROCESS_GROUP') else 0
                 )
                 
                 terminal_id = f"term_{self.terminal_counter}"
@@ -58,12 +62,14 @@ class WebTerminal:
                 self.terminals[terminal_id] = {
                     'process': process,
                     'output_queue': queue.Queue(),
-                    'active': True
+                    'active': True,
+                    'platform': 'windows'
                 }
                 
                 # Start output reader thread for Windows
                 threading.Thread(target=self._read_output_windows, args=(terminal_id,), daemon=True).start()
                 
+                logging.info(f"[SSH] Created Windows terminal session: {terminal_id}")
                 return terminal_id
             else:
                 # Linux/Unix mode - use pty (original code)
@@ -113,21 +119,46 @@ class WebTerminal:
         """Read output from Windows subprocess terminal"""
         terminal = self.terminals.get(terminal_id)
         if not terminal:
+            logging.error(f"[SSH] Terminal {terminal_id} not found for output reading")
             return
             
         process = terminal['process']
         output_queue = terminal['output_queue']
         
+        try:
+            # Send initial command to get a prompt
+            process.stdin.write('echo Terminal Ready\n')
+            process.stdin.flush()
+        except Exception as e:
+            logging.error(f"[SSH] Failed to send initial command: {e}")
+        
         while terminal['active'] and process.poll() is None:
             try:
-                line = process.stdout.readline()
-                if line:
-                    output_queue.put(line)
+                # Use a timeout to avoid blocking indefinitely
+                import select
+                import sys
+                
+                if sys.platform == "win32":
+                    # On Windows, just try to read with a timeout approach
+                    line = process.stdout.readline()
+                    if line:
+                        output_queue.put(line.rstrip('\n'))
+                    else:
+                        time.sleep(0.1)  # Small delay to prevent busy waiting
+                else:
+                    # For non-Windows systems, use select
+                    ready, _, _ = select.select([process.stdout], [], [], 0.1)
+                    if ready:
+                        line = process.stdout.readline()
+                        if line:
+                            output_queue.put(line.rstrip('\n'))
+                            
             except Exception as e:
                 logging.error(f"[SSH] Windows terminal read error: {e}")
                 break
                 
         terminal['active'] = False
+        logging.info(f"[SSH] Windows terminal output reader stopped for {terminal_id}")
     
     def _read_output(self, terminal_id):
         """Read output from terminal in background thread"""
@@ -320,8 +351,18 @@ class SSH(plugins.Plugin):
             elif path == "api/connections":
                 return jsonify(self.get_active_connections())
             elif path == "api/terminal/create":
-                terminal_id = self.web_terminal.create_terminal()
-                return jsonify({'terminal_id': terminal_id, 'success': terminal_id is not None})
+                try:
+                    terminal_id = self.web_terminal.create_terminal()
+                    if terminal_id:
+                        logging.info(f"[SSH] Successfully created terminal: {terminal_id}")
+                        return jsonify({'terminal_id': terminal_id, 'success': True, 'message': 'Terminal created successfully'})
+                    else:
+                        logging.error("[SSH] Failed to create terminal - create_terminal returned None")
+                        return jsonify({'terminal_id': None, 'success': False, 'message': 'Failed to create terminal session'})
+                except Exception as e:
+                    error_msg = f"Terminal creation error: {str(e)}"
+                    logging.error(f"[SSH] {error_msg}")
+                    return jsonify({'terminal_id': None, 'success': False, 'message': error_msg})
             elif path.startswith("api/terminal/") and "/input" in path:
                 terminal_id = path.split("/")[2]
                 data = request.get_json() or {}
@@ -666,9 +707,15 @@ class SSH(plugins.Plugin):
         // Connect to terminal
         connectBtn.addEventListener('click', async () => {
             try {
+                updateStatus('Connecting...', false);
                 const response = await fetch('/plugins/ssh/api/terminal/create', {
                     method: 'POST'
                 });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                
                 const data = await response.json();
                 
                 if (data.success && data.terminal_id) {
@@ -680,10 +727,14 @@ class SSH(plugins.Plugin):
                     terminal.value = 'Terminal connected. Type commands below:\\n\\n';
                     terminal.focus();
                 } else {
-                    alert('Failed to create terminal session');
+                    const errorMsg = data.message || 'Failed to create terminal session';
+                    updateStatus(`Connection failed: ${errorMsg}`, false);
+                    console.error('Terminal creation failed:', data);
                 }
             } catch (error) {
-                alert('Error connecting to terminal: ' + error.message);
+                const errorMsg = `Error connecting to terminal: ${error.message}`;
+                updateStatus(errorMsg, false);
+                console.error('Connection error:', error);
             }
         });
         
