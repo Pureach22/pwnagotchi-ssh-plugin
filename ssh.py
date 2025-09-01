@@ -9,13 +9,29 @@ import os
 import time
 import re
 from datetime import datetime
-from flask import render_template_string, request, jsonify, abort, flash, redirect, url_for
 
-import pwnagotchi
-import pwnagotchi.plugins as plugins
-import pwnagotchi.ui.fonts as fonts
-from pwnagotchi.ui.components import LabeledValue, Text
-from pwnagotchi.ui.view import BLACK
+try:
+    from flask import render_template_string, request, jsonify, abort, flash, redirect, url_for
+except ImportError:
+    logging.error("[SSH] Flask not available - WebUI features disabled")
+    # Create dummy functions to prevent import errors
+    def render_template_string(*args, **kwargs): return "Flask not available"
+    def request(*args, **kwargs): pass
+    def jsonify(data): return json.dumps(data)
+    def abort(code): return f"Error {code}"
+
+try:
+    import pwnagotchi
+    import pwnagotchi.plugins as plugins
+    import pwnagotchi.ui.fonts as fonts
+    from pwnagotchi.ui.components import LabeledValue, Text
+    from pwnagotchi.ui.view import BLACK
+except ImportError as e:
+    logging.error(f"[SSH] Pwnagotchi imports failed: {e}")
+    # Create minimal plugin base class if pwnagotchi not available
+    class plugins:
+        class Plugin:
+            def __init__(self): pass
 
 
 class SSHPlugin(plugins.Plugin):
@@ -45,12 +61,17 @@ class SSHPlugin(plugins.Plugin):
         self.authorized_keys_path = os.path.expanduser('~/.ssh/authorized_keys')
 
     def on_loaded(self):
-        logging.info("[SSH] SSH plugin loaded and initializing...")
+        logging.info("[SSH] ========================================")
+        logging.info("[SSH] SSH Plugin Starting...")
+        logging.info(f"[SSH] Plugin Version: {self.__version__}")
+        logging.info(f"[SSH] Plugin Author: {self.__author__}")
+        logging.info("[SSH] ========================================")
         
         # Ensure SSH directory exists
         ssh_dir = os.path.dirname(self.authorized_keys_path)
         if not os.path.exists(ssh_dir):
             os.makedirs(ssh_dir, mode=0o700)
+            logging.info(f"[SSH] Created SSH directory: {ssh_dir}")
             
         # Initialize SSH service status
         self.ssh_status = self.check_ssh_status()
@@ -61,7 +82,10 @@ class SSHPlugin(plugins.Plugin):
             logging.info("[SSH] Auto-starting SSH service...")
             self.start_ssh_service()
             
-        logging.info("[SSH] SSH plugin fully loaded and ready")
+        logging.info("[SSH] ========================================")
+        logging.info("[SSH] SSH Plugin FULLY LOADED AND READY!")
+        logging.info("[SSH] WebUI should be available at: /plugins/ssh/")
+        logging.info("[SSH] ========================================")
             
         logging.info(f"[SSH] SSH service status: {'Running' if self.ssh_status else 'Stopped'}")
 
