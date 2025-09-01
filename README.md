@@ -128,24 +128,7 @@ The plugin shows SSH status on your Pwnagotchi screen:
 | `/plugins/ssh/api/stop` | POST | Stop SSH service |
 | `/plugins/ssh/api/connections` | GET | Get active connections |
 
-## 🔒 Security Best Practices
-
-### SSH Key Setup
-```bash
-# Generate SSH key pair
-ssh-keygen -t ed25519 -C "your-email@example.com"
-
-# Copy public key to Pwnagotchi (replace with your key)
-echo "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJbR... your-email@example.com" >> ~/.ssh/authorized_keys
-```
-
-### Additional Security
-- Use non-standard SSH ports if exposed to internet
-- Implement firewall rules for SSH access
-- Regular key rotation and access review
-- Monitor authentication attempts
-
-## 📂 Project Structure
+##  Project Structure
 
 ```
 pwnagotchi-ssh-plugin/
