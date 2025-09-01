@@ -34,6 +34,13 @@ except ImportError as e:
             def __init__(self): pass
 
 
+# Plugin metadata (required by Pwnagotchi)
+name = 'ssh'
+author = 'Pwnagotchi Community'
+version = '1.0.0'
+description = 'SSH access and management plugin for Pwnagotchi WebUI'
+
+
 class SSHPlugin(plugins.Plugin):
     __author__ = 'Pwnagotchi Community'
     __version__ = '1.0.0'
@@ -137,16 +144,18 @@ class SSHPlugin(plugins.Plugin):
         """Handle WebUI requests for SSH management"""
         try:
             # Debug logging to help troubleshoot 404 issues
-            logging.info(f"[SSH] Webhook request: path='{path}', method={request.method}")
+            logging.info(f"[SSH] ========= WEBHOOK CALLED =========")
+            logging.info(f"[SSH] Webhook request: path='{path}', method={getattr(request, 'method', 'UNKNOWN')}")
+            logging.info(f"[SSH] =====================================")
             
             if path == "/" or path == "":
                 return self.render_dashboard()
             elif path == "config":
-                if request.method == 'POST':
+                if getattr(request, 'method', 'GET') == 'POST':
                     return self.handle_config_update(request)
                 return self.render_config_page()
             elif path == "keys":
-                if request.method == 'POST':
+                if getattr(request, 'method', 'GET') == 'POST':
                     return self.handle_key_management(request)
                 return self.render_keys_page()
             elif path == "api/status":
@@ -159,13 +168,15 @@ class SSHPlugin(plugins.Plugin):
                 return self.get_connections_api()
             elif path == "test":
                 # Simple test endpoint to verify plugin is working
-                return "<html><body><h1>SSH Plugin Test</h1><p>Plugin is working correctly!</p></body></html>"
+                return "<html><body><h1>SSH Plugin Test</h1><p>Plugin is working correctly!</p><p>✅ Webhook method called successfully</p></body></html>"
             else:
                 logging.warning(f"[SSH] 404 - Unknown path: '{path}'")
                 return f"<html><body><h1>404 Not Found</h1><p>Path '{path}' not found in SSH plugin.</p><p>Available paths: /, config, keys, api/status, api/start, api/stop, api/connections, test</p></body></html>", 404
         except Exception as e:
             logging.error(f"[SSH] Webhook error: {e}")
-            return f"<html><body><h1>Error</h1><p>{str(e)}</p></body></html>", 500
+            import traceback
+            traceback.print_exc()
+            return f"<html><body><h1>Error</h1><p>{str(e)}</p><pre>{traceback.format_exc()}</pre></body></html>", 500
 
     def check_ssh_status(self):
         """Check if SSH service is running"""
@@ -690,8 +701,3 @@ class SSHPlugin(plugins.Plugin):
             'connections': self.get_active_connections(),
             'count': self.get_active_connections_count()
         })
-
-
-# Required for Pwnagotchi plugin loading
-def load_plugin():
-    return SSHPlugin()
