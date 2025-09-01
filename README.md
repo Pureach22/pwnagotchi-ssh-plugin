@@ -132,11 +132,10 @@ The plugin shows SSH status on your Pwnagotchi screen:
 
 ```
 pwnagotchi-ssh-plugin/
-├── ssh.py                # Main plugin file (renamed for Pwnagotchi compatibility)
-├── ssh_plugin.py         # Development version
-├── requirements.txt      # Python dependencies
-├── README.md            # This documentation
-└── .gitignore           # Git ignore rules
+├── ssh.py               # Main plugin file
+├── requirements.txt     # Python dependencies
+├── README.md           # This documentation
+└── .gitignore          # Git ignore rules
 ```
 
 **Installation Location**: `/usr/local/share/pwnagotchi/custom-plugins/ssh.py`
