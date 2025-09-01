@@ -44,17 +44,28 @@ class WebTerminal:
                 # Windows development mode - use subprocess
                 import subprocess
                 
-                # Use cmd.exe instead of PowerShell for better compatibility
-                process = subprocess.Popen(
-                    ['cmd.exe'],
-                    stdin=subprocess.PIPE,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    text=True,
-                    bufsize=0,
-                    universal_newlines=True,
-                    creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if hasattr(subprocess, 'CREATE_NEW_PROCESS_GROUP') else 0
-                )
+                # Try PowerShell with better error handling
+                try:
+                    process = subprocess.Popen(
+                        ['powershell.exe', '-NoProfile', '-Command', '-'],
+                        stdin=subprocess.PIPE,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                        text=True,
+                        bufsize=0,
+                        universal_newlines=True
+                    )
+                except FileNotFoundError:
+                    # Fallback to cmd.exe if PowerShell not found
+                    process = subprocess.Popen(
+                        ['cmd.exe'],
+                        stdin=subprocess.PIPE,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                        text=True,
+                        bufsize=0,
+                        universal_newlines=True
+                    )
                 
                 terminal_id = f"term_{self.terminal_counter}"
                 self.terminal_counter += 1
@@ -707,18 +718,23 @@ class SSH(plugins.Plugin):
         // Connect to terminal
         connectBtn.addEventListener('click', async () => {
             try {
+                console.log('Attempting to connect to terminal...');
                 updateStatus('Connecting...', false);
                 const response = await fetch('/plugins/ssh/api/terminal/create', {
                     method: 'POST'
                 });
+                
+                console.log('Response received:', response.status, response.statusText);
                 
                 if (!response.ok) {
                     throw new Error(`HTTP ${response.status}: ${response.statusText}`);
                 }
                 
                 const data = await response.json();
+                console.log('Response data:', data);
                 
                 if (data.success && data.terminal_id) {
+                    console.log('Terminal created successfully:', data.terminal_id);
                     terminalId = data.terminal_id;
                     connected = true;
                     updateStatus('Connected', true);
@@ -728,13 +744,13 @@ class SSH(plugins.Plugin):
                     terminal.focus();
                 } else {
                     const errorMsg = data.message || 'Failed to create terminal session';
+                    console.error('Terminal creation failed:', errorMsg, data);
                     updateStatus(`Connection failed: ${errorMsg}`, false);
-                    console.error('Terminal creation failed:', data);
                 }
             } catch (error) {
                 const errorMsg = `Error connecting to terminal: ${error.message}`;
-                updateStatus(errorMsg, false);
                 console.error('Connection error:', error);
+                updateStatus(errorMsg, false);
             }
         });
         
