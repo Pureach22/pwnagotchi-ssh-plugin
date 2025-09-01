@@ -34,7 +34,8 @@ class SSHPlugin(plugins.Plugin):
             'webui_path': '/ssh',
             'display_on_screen': True,
             'ssh_x_coord': 160,
-            'ssh_y_coord': 80
+            'ssh_y_coord': 80,
+            'listen_all_interfaces': True  # Support all network interfaces
         }
         self.ssh_status = False
         self.active_connections = []
@@ -165,17 +166,18 @@ class SSHPlugin(plugins.Plugin):
             return False
 
     def get_active_connections_count(self):
-        """Get count of active SSH connections"""
+        """Get count of active SSH connections on all interfaces"""
         try:
-            # Use 'ss' command to check for SSH connections
+            # Use 'ss' command to check for SSH connections on all interfaces
+            ssh_port = self.options.get("port", 22)
             result = subprocess.run(['ss', '-tn', 'state', 'established', 
-                                   f'sport = :{self.options.get("port", 22)}'],
+                                   f'sport = :{ssh_port}'],
                                   capture_output=True, text=True)
             
             if result.returncode == 0:
                 lines = result.stdout.strip().split('\n')
-                # Filter out header line
-                connections = [line for line in lines if 'ESTAB' in line or ':22' in line]
+                # Filter out header line and count established connections
+                connections = [line for line in lines if 'ESTAB' in line and f':{ssh_port}' in line]
                 return len(connections)
             return 0
         except Exception as e:
@@ -605,6 +607,10 @@ class SSHPlugin(plugins.Plugin):
             # Apply our settings
             config_dict['port'] = str(self.options.get('port', 22))
             config_dict['maxstartups'] = str(self.options.get('max_connections', 5))
+            
+            # Listen on all network interfaces (support all networks)
+            if self.options.get('listen_all_interfaces', True):
+                config_dict['listenaddress'] = '0.0.0.0'
             
             if self.options.get('key_auth_only', True):
                 config_dict['passwordauthentication'] = 'no'
