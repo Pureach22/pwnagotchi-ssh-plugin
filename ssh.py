@@ -172,19 +172,12 @@ class SSH(plugins.Plugin):
         }
         self.ssh_status = False
         self.active_connections = 0
-        self.authorized_keys_path = "/root/.ssh/authorized_keys"
-        self.ssh_config_path = "/etc/ssh/sshd_config"
         self.ready = False
         self.web_terminal = WebTerminal()
 
     def on_loaded(self):
         """Plugin loaded callback"""
         logging.info("[SSH] SSH plugin loaded.")
-        
-        # Ensure SSH directory exists
-        ssh_dir = os.path.dirname(self.authorized_keys_path)
-        if not os.path.exists(ssh_dir):
-            os.makedirs(ssh_dir, mode=0o700)
         
         # Check initial SSH status
         self.ssh_status = self.check_ssh_status()
@@ -247,14 +240,6 @@ class SSH(plugins.Plugin):
         try:
             if path == "/" or path == "" or path is None:
                 return self.render_dashboard()
-            elif path == "config":
-                if getattr(request, 'method', 'GET') == 'POST':
-                    return self.handle_config_update(request)
-                return self.render_config_page()
-            elif path == "keys":
-                if getattr(request, 'method', 'GET') == 'POST':
-                    return self.handle_key_management(request)
-                return self.render_keys_page()
             elif path == "terminal":
                 return self.render_terminal_page()
             elif path == "api/status":
@@ -415,8 +400,6 @@ class SSH(plugins.Plugin):
         
         <div class="nav">
             <a href="/plugins/ssh/">Dashboard</a>
-            <a href="/plugins/ssh/config">Configuration</a>
-            <a href="/plugins/ssh/keys">SSH Keys</a>
             <a href="/plugins/ssh/terminal">Web Terminal</a>
         </div>
 
@@ -450,15 +433,13 @@ class SSH(plugins.Plugin):
         {% endif %}
 
         <h3>🔧 Quick Actions</h3>
-        <button class="button btn-primary" onclick="location.href='/plugins/ssh/config'">Configure SSH</button>
-        <button class="button btn-secondary" onclick="location.href='/plugins/ssh/keys'">Manage Keys</button>
-        <button class="button btn-primary" onclick="location.href='/plugins/ssh/terminal'">Web Terminal</button>
+        <button class="button btn-primary" onclick="location.href='/plugins/ssh/terminal'">Open Web Terminal</button>
         
         <div style="margin-top: 30px; padding: 15px; background: #e9ecef; border-radius: 4px;">
-            <h4>📋 SSH Connection Info</h4>
-            <p><strong>Default SSH command:</strong> <code>ssh pi@[PWNAGOTCHI_IP]</code></p>
-            <p><strong>Default port:</strong> 22</p>
-            <p><strong>Key authentication:</strong> Recommended</p>
+            <h4>� Web Terminal Access</h4>
+            <p><strong>Browser Terminal:</strong> <a href="/plugins/ssh/terminal">Click here to open terminal</a></p>
+            <p><strong>Features:</strong> Full bash shell, command history, real-time output</p>
+            <p><strong>Usage:</strong> Run any Linux command directly in your browser</p>
         </div>
     </div>
 </body>
@@ -472,167 +453,6 @@ class SSH(plugins.Plugin):
             status_class='active' if status else 'inactive',
             connections=connections,
             connection_count=len(connections)
-        )
-
-    def render_config_page(self):
-        """Render SSH configuration page"""
-        template = """
-<!DOCTYPE html>
-<html>
-<head>
-    <title>SSH Configuration - {{ pwnagotchi_name }}</title>
-    <meta charset="utf-8">
-    <style>
-        body { font-family: monospace; margin: 20px; background: #f0f0f0; }
-        .container { max-width: 800px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; }
-        .nav { margin: 20px 0; }
-        .nav a { margin-right: 15px; text-decoration: none; color: #007bff; }
-        .form-group { margin: 15px 0; }
-        label { display: block; margin-bottom: 5px; font-weight: bold; }
-        input, textarea, select { width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; }
-        .button { padding: 8px 16px; margin: 4px; border: none; border-radius: 4px; cursor: pointer; }
-        .btn-primary { background: #007bff; color: white; }
-        .alert { padding: 10px; margin: 10px 0; border-radius: 4px; }
-        .alert-info { background: #d1ecf1; color: #0c5460; border: 1px solid #bee5eb; }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1>⚙️ SSH Configuration</h1>
-        
-        <div class="nav">
-            <a href="/plugins/ssh/">Dashboard</a>
-            <a href="/plugins/ssh/config">Configuration</a>
-            <a href="/plugins/ssh/keys">SSH Keys</a>
-        </div>
-
-        <div class="alert alert-info">
-            <strong>Note:</strong> Configuration changes require SSH service restart to take effect.
-        </div>
-
-        <form method="POST">
-            <div class="form-group">
-                <label for="port">SSH Port:</label>
-                <input type="number" id="port" name="port" value="22" min="1" max="65535">
-            </div>
-            
-            <div class="form-group">
-                <label for="permit_root">Permit Root Login:</label>
-                <select id="permit_root" name="permit_root">
-                    <option value="no">No</option>
-                    <option value="yes">Yes</option>
-                    <option value="prohibit-password" selected>Prohibit Password (Keys Only)</option>
-                </select>
-            </div>
-            
-            <div class="form-group">
-                <label for="password_auth">Password Authentication:</label>
-                <select id="password_auth" name="password_auth">
-                    <option value="no" selected>No (Recommended)</option>
-                    <option value="yes">Yes</option>
-                </select>
-            </div>
-            
-            <div class="form-group">
-                <label for="listen_addresses">Listen Addresses (one per line):</label>
-                <textarea id="listen_addresses" name="listen_addresses" rows="3">0.0.0.0</textarea>
-            </div>
-            
-            <button type="submit" class="button btn-primary">Save Configuration</button>
-        </form>
-    </div>
-</body>
-</html>
-        """
-        
-        return render_template_string(template, pwnagotchi_name=pwnagotchi.name())
-
-    def render_keys_page(self):
-        """Render SSH keys management page"""
-        keys = self.get_authorized_keys()
-        
-        template = """
-<!DOCTYPE html>
-<html>
-<head>
-    <title>SSH Keys - {{ pwnagotchi_name }}</title>
-    <meta charset="utf-8">
-    <style>
-        body { font-family: monospace; margin: 20px; background: #f0f0f0; }
-        .container { max-width: 800px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; }
-        .nav { margin: 20px 0; }
-        .nav a { margin-right: 15px; text-decoration: none; color: #007bff; }
-        .form-group { margin: 15px 0; }
-        label { display: block; margin-bottom: 5px; font-weight: bold; }
-        input, textarea { width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; }
-        .button { padding: 8px 16px; margin: 4px; border: none; border-radius: 4px; cursor: pointer; }
-        .btn-primary { background: #007bff; color: white; }
-        .btn-danger { background: #dc3545; color: white; }
-        table { width: 100%; border-collapse: collapse; margin: 10px 0; }
-        th, td { padding: 8px; text-align: left; border-bottom: 1px solid #ddd; }
-        th { background-color: #f2f2f2; }
-        .key-data { font-family: monospace; font-size: 10px; max-width: 200px; overflow: hidden; text-overflow: ellipsis; }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1>🔑 SSH Key Management</h1>
-        
-        <div class="nav">
-            <a href="/plugins/ssh/">Dashboard</a>
-            <a href="/plugins/ssh/config">Configuration</a>
-            <a href="/plugins/ssh/keys">SSH Keys</a>
-        </div>
-
-        <h3>📝 Add New SSH Key</h3>
-        <form method="POST">
-            <input type="hidden" name="action" value="add_key">
-            <div class="form-group">
-                <label for="key_name">Key Name (optional):</label>
-                <input type="text" id="key_name" name="key_name" placeholder="e.g., laptop-key">
-            </div>
-            <div class="form-group">
-                <label for="public_key">Public Key:</label>
-                <textarea id="public_key" name="public_key" rows="3" placeholder="ssh-rsa AAAAB3NzaC1yc2E... user@host" required></textarea>
-            </div>
-            <button type="submit" class="button btn-primary">Add Key</button>
-        </form>
-
-        <h3>📋 Authorized Keys ({{ key_count }})</h3>
-        {% if keys %}
-        <table>
-            <thead>
-                <tr><th>Name</th><th>Type</th><th>Key Data</th><th>Actions</th></tr>
-            </thead>
-            <tbody>
-                {% for key in keys %}
-                <tr>
-                    <td>{{ key.name }}</td>
-                    <td>{{ key.type }}</td>
-                    <td class="key-data">{{ key.key[:50] }}...</td>
-                    <td>
-                        <form method="POST" style="display: inline;">
-                            <input type="hidden" name="action" value="remove_key">
-                            <input type="hidden" name="key_data" value="{{ key.full_line }}">
-                            <button type="submit" class="button btn-danger" onclick="return confirm('Remove this key?')">Remove</button>
-                        </form>
-                    </td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-        {% else %}
-        <p>No SSH keys configured. Add a key above to enable key-based authentication.</p>
-        {% endif %}
-    </div>
-</body>
-</html>
-        """
-        
-        return render_template_string(template,
-            pwnagotchi_name=pwnagotchi.name(),
-            keys=keys,
-            key_count=len(keys)
         )
 
     def render_terminal_page(self):
@@ -740,8 +560,6 @@ class SSH(plugins.Plugin):
         
         <div class="nav">
             <a href="/plugins/ssh/">Dashboard</a>
-            <a href="/plugins/ssh/config">Configuration</a>
-            <a href="/plugins/ssh/keys">SSH Keys</a>
             <a href="/plugins/ssh/terminal">Web Terminal</a>
         </div>
 
@@ -930,96 +748,3 @@ class SSH(plugins.Plugin):
         """
         
         return render_template_string(template, pwnagotchi_name=pwnagotchi.name())
-
-    def get_authorized_keys(self):
-        """Get list of authorized SSH keys"""
-        keys = []
-        try:
-            if os.path.exists(self.authorized_keys_path):
-                with open(self.authorized_keys_path, 'r') as f:
-                    for i, line in enumerate(f):
-                        line = line.strip()
-                        if line and not line.startswith('#'):
-                            parts = line.split()
-                            if len(parts) >= 2:
-                                key_type = parts[0]
-                                key_data = parts[1]
-                                key_name = parts[2] if len(parts) > 2 else f'Key {i+1}'
-                                
-                                keys.append({
-                                    'type': key_type,
-                                    'key': key_data,
-                                    'name': key_name,
-                                    'full_line': line
-                                })
-        except Exception as e:
-            logging.error(f"[SSH] Error reading authorized keys: {e}")
-        
-        return keys
-
-    def handle_config_update(self, request):
-        """Handle SSH configuration updates"""
-        try:
-            # This is a placeholder - in a real implementation,
-            # you would update the SSH configuration file
-            logging.info("[SSH] Configuration update requested")
-            return "<html><body><h1>Configuration Updated</h1><p>SSH configuration has been updated.</p><a href='/plugins/ssh/'>Back to Dashboard</a></body></html>"
-        except Exception as e:
-            logging.error(f"[SSH] Config update error: {e}")
-            return f"<html><body><h1>Error</h1><p>{str(e)}</p></body></html>", 500
-
-    def handle_key_management(self, request):
-        """Handle SSH key management operations"""
-        try:
-            action = request.form.get('action')
-            
-            if action == 'add_key':
-                public_key = request.form.get('public_key', '').strip()
-                key_name = request.form.get('key_name', '').strip()
-                
-                if not public_key:
-                    return "<html><body><h1>Error</h1><p>Public key is required</p><a href='/plugins/ssh/keys'>Back</a></body></html>"
-                
-                # Validate key format
-                parts = public_key.split()
-                if len(parts) < 2 or parts[0] not in ['ssh-rsa', 'ssh-ed25519', 'ssh-dss', 'ecdsa-sha2-nistp256']:
-                    return "<html><body><h1>Error</h1><p>Invalid key format</p><a href='/plugins/ssh/keys'>Back</a></body></html>"
-                
-                # Add name if provided
-                if key_name:
-                    if len(parts) == 2:
-                        public_key += f' {key_name}'
-                    else:
-                        parts[2] = key_name
-                        public_key = ' '.join(parts)
-                
-                # Add key to authorized_keys
-                with open(self.authorized_keys_path, 'a') as f:
-                    f.write(f'\n{public_key}\n')
-                
-                logging.info(f"[SSH] Added new SSH key: {key_name or 'unnamed'}")
-                return "<html><body><h1>Success</h1><p>SSH key added successfully</p><a href='/plugins/ssh/keys'>Back to Keys</a></body></html>"
-            
-            elif action == 'remove_key':
-                key_data = request.form.get('key_data', '').strip()
-                
-                if key_data and os.path.exists(self.authorized_keys_path):
-                    # Read current keys
-                    with open(self.authorized_keys_path, 'r') as f:
-                        lines = f.readlines()
-                    
-                    # Remove the specified key
-                    updated_lines = [line for line in lines if line.strip() != key_data]
-                    
-                    # Write back
-                    with open(self.authorized_keys_path, 'w') as f:
-                        f.writelines(updated_lines)
-                    
-                    logging.info("[SSH] Removed SSH key")
-                    return "<html><body><h1>Success</h1><p>SSH key removed successfully</p><a href='/plugins/ssh/keys'>Back to Keys</a></body></html>"
-            
-            return "<html><body><h1>Error</h1><p>Unknown action</p><a href='/plugins/ssh/keys'>Back</a></body></html>"
-            
-        except Exception as e:
-            logging.error(f"[SSH] Key management error: {e}")
-            return f"<html><body><h1>Error</h1><p>{str(e)}</p></body></html>", 500
