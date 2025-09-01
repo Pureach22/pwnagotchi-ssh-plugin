@@ -5,7 +5,29 @@
 ![Pwnagotchi](https://img.shields.io/badge/pwnagotchi--torch-compatible-green.svg)
 ![Version](https://img.shields.io/badge/version-2.0.0-brightgreen.svg)
 
+[![Easy Install](https://img.shields.io/badge/Install-One%20Command-red.svg?style=for-the-badge)](https://github.com/Pureach22/pwnagotchi-ssh-plugin#-quick-start)
+
 A **modern, feature-rich SSH Web Terminal** plugin specifically designed for **pwnagotchi-torch-plugins**. Provides a beautiful, responsive web-based terminal interface with real-time command execution, session management, and advanced features.
+
+---
+
+## ⚡ TL;DR - Super Quick Install
+
+```bash
+curl -sSL https://raw.githubusercontent.com/Pureach22/pwnagotchi-ssh-plugin/main/install.sh | sudo bash
+```
+
+Then visit: `http://your-pwnagotchi-ip:8080/plugins/ssh/terminal` 🚀
+
+---
+
+## ⚡ One-Command Installation
+
+```bash
+curl -sSL https://raw.githubusercontent.com/Pureach22/pwnagotchi-ssh-plugin/main/install.sh | sudo bash
+```
+
+**Done!** Access your terminal at: `http://your-pwnagotchi-ip:8080/plugins/ssh/terminal`
 
 ## ✨ Features
 
@@ -52,27 +74,56 @@ A **modern, feature-rich SSH Web Terminal** plugin specifically designed for **p
 
 ## 🚀 Quick Start
 
-### Installation
+### 📦 Easy Installation (Recommended)
+
+Install with a single command - just like pwnagotchi-torch-plugins:
+
+```bash
+curl -sSL https://raw.githubusercontent.com/Pureach22/pwnagotchi-ssh-plugin/main/install.sh | sudo bash
+```
+
+**That's it!** The script will automatically:
+- ✅ Install all dependencies
+- ✅ Download and install the plugin
+- ✅ Configure Pwnagotchi
+- ✅ Start SSH service
+- ✅ Restart Pwnagotchi
+
+### 🔄 Alternative Installation Methods
+
+#### Method 1: Direct Download + Install
+```bash
+# Download and run installer
+wget https://raw.githubusercontent.com/Pureach22/pwnagotchi-ssh-plugin/main/install.sh
+sudo chmod +x install.sh
+sudo ./install.sh
+```
+
+#### Method 2: Git Clone + Install
+```bash
+# Clone repository and install
+git clone https://github.com/Pureach22/pwnagotchi-ssh-plugin.git
+cd pwnagotchi-ssh-plugin
+sudo ./install.sh
+```
+
+### 🔧 Manual Installation
+
+For advanced users who prefer manual control:
 
 ```bash
 # 1. Clone the repository
 git clone https://github.com/Pureach22/pwnagotchi-ssh-plugin.git
 cd pwnagotchi-ssh-plugin
 
-# 2. Install system dependencies
-sudo apt update
-sudo apt install -y python3-dev python3-pip openssh-server
+# 2. Run installation script
+sudo ./install.sh
 
-# 3. Install Python dependencies
+# OR install manually:
+sudo apt update && sudo apt install -y python3-dev python3-pip openssh-server
 sudo pip3 install -r requirements.txt
-
-# 4. Copy plugin to Pwnagotchi
 sudo cp ssh.py /usr/local/share/pwnagotchi/custom-plugins/
-
-# 5. Configure Pwnagotchi
 echo "main.plugins.ssh.enabled = true" | sudo tee -a /etc/pwnagotchi/config.toml
-
-# 6. Restart Pwnagotchi
 sudo systemctl restart pwnagotchi
 ```
 

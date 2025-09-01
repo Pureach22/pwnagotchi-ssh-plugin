@@ -1,6 +1,7 @@
 #!/bin/bash
 
 # SSH Web Terminal Plugin Installer for Pwnagotchi Torch
+# One-command installation script inspired by pwnagotchi-torch-plugins
 # Version 2.0.0
 # https://github.com/Pureach22/pwnagotchi-ssh-plugin
 
@@ -18,16 +19,19 @@ NC='\033[0m' # No Color
 # Plugin information
 PLUGIN_NAME="SSH Web Terminal"
 PLUGIN_VERSION="2.0.0"
-PLUGIN_FILE="ssh.py"
+PLUGIN_URL="https://raw.githubusercontent.com/Pureach22/pwnagotchi-ssh-plugin/main/ssh.py"
 PLUGIN_DIR="/usr/local/share/pwnagotchi/custom-plugins"
 CONFIG_FILE="/etc/pwnagotchi/config.toml"
-BACKUP_DIR="/tmp/pwnagotchi-ssh-backup-$(date +%Y%m%d-%H%M%S)"
+TEMP_DIR="/tmp/pwnagotchi-ssh-install"
 
 # Helper functions
-print_header() {
-    echo -e "${PURPLE}================================${NC}"
-    echo -e "${PURPLE}  $1${NC}"
-    echo -e "${PURPLE}================================${NC}"
+print_banner() {
+    echo -e "${PURPLE}"
+    echo "╔═══════════════════════════════════════════╗"
+    echo "║        SSH Web Terminal Installer        ║"
+    echo "║     For Pwnagotchi Torch - v${PLUGIN_VERSION}        ║"
+    echo "╚═══════════════════════════════════════════╝"
+    echo -e "${NC}"
 }
 
 print_step() {
@@ -35,116 +39,107 @@ print_step() {
 }
 
 print_success() {
-    echo -e "${GREEN}[SUCCESS]${NC} $1"
+    echo -e "${GREEN}[✓]${NC} $1"
 }
 
 print_warning() {
-    echo -e "${YELLOW}[WARNING]${NC} $1"
+    echo -e "${YELLOW}[!]${NC} $1"
 }
 
 print_error() {
-    echo -e "${RED}[ERROR]${NC} $1"
+    echo -e "${RED}[✗]${NC} $1"
 }
 
 print_info() {
-    echo -e "${CYAN}[INFO]${NC} $1"
+    echo -e "${CYAN}[i]${NC} $1"
 }
 
 # Check if running as root
 check_root() {
-    if [[ $EUID -eq 0 ]]; then
-        print_warning "Running as root. This is OK for installation."
-    else
+    if [[ $EUID -ne 0 ]]; then
         print_error "This script needs to be run with sudo privileges."
-        print_info "Please run: sudo $0"
+        print_info "Please run: curl -sSL https://raw.githubusercontent.com/Pureach22/pwnagotchi-ssh-plugin/main/install.sh | sudo bash"
         exit 1
     fi
 }
 
-# Check if we're on a Pwnagotchi system
-check_pwnagotchi() {
-    print_step "Checking Pwnagotchi environment..."
+# Detect system and check compatibility
+check_system() {
+    print_step "Checking system compatibility..."
     
-    if [ ! -f "/etc/pwnagotchi/config.toml" ]; then
-        print_warning "Pwnagotchi config file not found. This might not be a Pwnagotchi system."
-        echo -n "Continue anyway? (y/N): "
+    # Check if this looks like a Pwnagotchi system
+    if [ -f "/etc/pwnagotchi/config.toml" ] || [ -d "/usr/local/share/pwnagotchi" ]; then
+        print_success "Pwnagotchi system detected"
+    else
+        print_warning "This doesn't appear to be a Pwnagotchi system"
+        echo -n "Continue installation anyway? (y/N): "
         read -r response
         if [[ ! "$response" =~ ^[Yy]$ ]]; then
-            print_info "Installation cancelled."
+            print_info "Installation cancelled"
             exit 0
         fi
+    fi
+    
+    # Check Python version
+    if command -v python3 &> /dev/null; then
+        PYTHON_VERSION=$(python3 -c 'import sys; print(".".join(map(str, sys.version_info[:2])))')
+        print_success "Python ${PYTHON_VERSION} found"
     else
-        print_success "Pwnagotchi environment detected."
-    fi
-}
-
-# Create backup
-create_backup() {
-    print_step "Creating backup..."
-    
-    mkdir -p "$BACKUP_DIR"
-    
-    # Backup existing plugin if it exists
-    if [ -f "$PLUGIN_DIR/$PLUGIN_FILE" ]; then
-        cp "$PLUGIN_DIR/$PLUGIN_FILE" "$BACKUP_DIR/"
-        print_success "Existing plugin backed up to $BACKUP_DIR/"
-    fi
-    
-    # Backup config file
-    if [ -f "$CONFIG_FILE" ]; then
-        cp "$CONFIG_FILE" "$BACKUP_DIR/"
-        print_success "Config file backed up to $BACKUP_DIR/"
+        print_error "Python 3 not found"
+        exit 1
     fi
 }
 
 # Install system dependencies
-install_dependencies() {
+install_system_deps() {
     print_step "Installing system dependencies..."
     
-    # Update package list
-    apt update -q
+    # Update package list quietly
+    apt update -qq
     
     # Install required packages
-    apt install -y python3-dev python3-pip openssh-server
+    apt install -y curl wget python3-pip python3-dev openssh-server > /dev/null 2>&1
     
     # Enable SSH service
-    systemctl enable ssh
+    systemctl enable ssh > /dev/null 2>&1
     
-    print_success "System dependencies installed."
+    print_success "System dependencies installed"
 }
 
 # Install Python dependencies
 install_python_deps() {
     print_step "Installing Python dependencies..."
     
-    # Check if requirements.txt exists
-    if [ -f "requirements.txt" ]; then
-        pip3 install -r requirements.txt
-        print_success "Python dependencies installed from requirements.txt"
-    else
-        # Install dependencies manually
-        pip3 install flask jinja2 psutil paramiko cryptography ptyprocess pexpect
-        print_success "Python dependencies installed manually"
-    fi
+    # Install Python packages
+    pip3 install flask jinja2 psutil paramiko cryptography ptyprocess pexpect > /dev/null 2>&1
+    
+    print_success "Python dependencies installed"
 }
 
-# Install plugin
+# Download and install plugin
 install_plugin() {
-    print_step "Installing SSH Web Terminal plugin..."
+    print_step "Downloading and installing plugin..."
     
-    # Create plugin directory if it doesn't exist
+    # Create directories
     mkdir -p "$PLUGIN_DIR"
+    mkdir -p "$TEMP_DIR"
     
-    # Copy plugin file
-    if [ -f "$PLUGIN_FILE" ]; then
-        cp "$PLUGIN_FILE" "$PLUGIN_DIR/"
-        chmod 644 "$PLUGIN_DIR/$PLUGIN_FILE"
-        print_success "Plugin installed to $PLUGIN_DIR/$PLUGIN_FILE"
+    # Download plugin file
+    if curl -sSL "$PLUGIN_URL" -o "$TEMP_DIR/ssh.py"; then
+        print_success "Plugin downloaded"
     else
-        print_error "Plugin file $PLUGIN_FILE not found in current directory."
-        print_info "Please run this script from the plugin directory."
+        print_error "Failed to download plugin"
         exit 1
     fi
+    
+    # Install plugin
+    cp "$TEMP_DIR/ssh.py" "$PLUGIN_DIR/"
+    chmod 644 "$PLUGIN_DIR/ssh.py"
+    
+    # Cleanup
+    rm -rf "$TEMP_DIR"
+    
+    print_success "Plugin installed to $PLUGIN_DIR/ssh.py"
 }
 
 # Configure plugin
@@ -155,40 +150,24 @@ configure_plugin() {
     if [ ! -f "$CONFIG_FILE" ]; then
         mkdir -p "$(dirname "$CONFIG_FILE")"
         touch "$CONFIG_FILE"
-        print_info "Created new config file: $CONFIG_FILE"
     fi
     
-    # Check if plugin is already configured
+    # Check if already configured
     if grep -q "main.plugins.ssh.enabled" "$CONFIG_FILE"; then
-        print_warning "SSH plugin configuration already exists in config file."
-        echo -n "Update configuration? (y/N): "
-        read -r response
-        if [[ ! "$response" =~ ^[Yy]$ ]]; then
-            print_info "Skipping configuration update."
-            return
-        fi
-        
-        # Remove existing configuration
-        sed -i '/\[main\.plugins\.ssh\]/,/^$/d' "$CONFIG_FILE"
-        sed -i '/main\.plugins\.ssh\./d' "$CONFIG_FILE"
-    fi
-    
-    # Add plugin configuration
-    cat >> "$CONFIG_FILE" << EOF
+        print_warning "SSH plugin already configured"
+    else
+        # Add configuration
+        cat >> "$CONFIG_FILE" << 'EOF'
 
-# SSH Web Terminal Plugin Configuration
+# SSH Web Terminal Plugin
 [main.plugins.ssh]
 enabled = true
 display_on_screen = true
 auto_start_ssh = true
 enable_web_terminal = true
-ssh_x_coord = 160
-ssh_y_coord = 66
-terminal_theme = "dark"
-max_sessions = 5
 EOF
-    
-    print_success "Plugin configuration added to $CONFIG_FILE"
+        print_success "Plugin configuration added"
+    fi
 }
 
 # Start services
@@ -196,153 +175,81 @@ start_services() {
     print_step "Starting services..."
     
     # Start SSH service
-    systemctl start ssh
+    systemctl start ssh > /dev/null 2>&1
     print_success "SSH service started"
     
     # Restart Pwnagotchi
-    echo -n "Restart Pwnagotchi service now? (Y/n): "
-    read -r response
-    if [[ "$response" =~ ^[Nn]$ ]]; then
-        print_warning "Pwnagotchi service not restarted."
-        print_info "Please restart manually: sudo systemctl restart pwnagotchi"
-    else
-        systemctl restart pwnagotchi
-        print_success "Pwnagotchi service restarted"
-    fi
+    print_info "Restarting Pwnagotchi service..."
+    systemctl restart pwnagotchi > /dev/null 2>&1
+    print_success "Pwnagotchi restarted"
 }
 
-# Test installation
-test_installation() {
-    print_step "Testing installation..."
-    
-    sleep 5  # Wait for services to start
-    
-    # Check if SSH is running
-    if systemctl is-active --quiet ssh; then
-        print_success "SSH service is running"
-    else
-        print_warning "SSH service is not running"
-    fi
-    
-    # Check if Pwnagotchi is running
-    if systemctl is-active --quiet pwnagotchi; then
-        print_success "Pwnagotchi service is running"
-    else
-        print_warning "Pwnagotchi service is not running"
-    fi
-    
-    # Check if plugin file exists and is readable
-    if [ -r "$PLUGIN_DIR/$PLUGIN_FILE" ]; then
-        print_success "Plugin file is installed and readable"
-    else
-        print_error "Plugin file is not accessible"
-    fi
-}
-
-# Show final information
-show_final_info() {
-    print_header "Installation Complete!"
-    
-    echo -e "${GREEN}🎉 SSH Web Terminal Plugin v$PLUGIN_VERSION installed successfully!${NC}"
+# Show final results
+show_results() {
     echo ""
-    echo -e "${CYAN}📍 Access URLs:${NC}"
+    echo -e "${GREEN}╔═══════════════════════════════════════════╗${NC}"
+    echo -e "${GREEN}║            INSTALLATION COMPLETE!        ║${NC}"
+    echo -e "${GREEN}╚═══════════════════════════════════════════╝${NC}"
+    echo ""
+    echo -e "${CYAN}🌐 Access URLs:${NC}"
     echo "   Dashboard: http://$(hostname -I | awk '{print $1}'):8080/plugins/ssh/"
     echo "   Terminal:  http://$(hostname -I | awk '{print $1}'):8080/plugins/ssh/terminal"
     echo ""
-    echo -e "${CYAN}🔧 Configuration:${NC}"
-    echo "   Config file: $CONFIG_FILE"
-    echo "   Plugin file: $PLUGIN_DIR/$PLUGIN_FILE"
-    echo "   Backup: $BACKUP_DIR"
+    echo -e "${CYAN}� Mobile Access:${NC}"
+    echo "   Works perfectly on phones and tablets!"
     echo ""
-    echo -e "${CYAN}📊 Service Status:${NC}"
-    echo "   SSH: $(systemctl is-active ssh)"
-    echo "   Pwnagotchi: $(systemctl is-active pwnagotchi)"
+    echo -e "${CYAN}� Features Available:${NC}"
+    echo "   ✓ Web-based terminal with command history"
+    echo "   ✓ Multi-session support"
+    echo "   ✓ Real-time command execution"
+    echo "   ✓ Mobile-responsive interface"
+    echo "   ✓ SSH service management"
     echo ""
-    echo -e "${CYAN}🛠️ Troubleshooting:${NC}"
-    echo "   Check logs: sudo journalctl -u pwnagotchi -f | grep ssh"
-    echo "   Restart service: sudo systemctl restart pwnagotchi"
-    echo "   Test API: curl http://localhost:8080/plugins/ssh/api/ssh/status"
+    echo -e "${YELLOW}⚠️  Security Note:${NC}"
+    echo "   SSH service is now running. Make sure you have"
+    echo "   secure passwords and/or SSH keys configured."
     echo ""
-    echo -e "${YELLOW}⚠️  Important Notes:${NC}"
-    echo "   • Make sure your firewall allows port 8080"
-    echo "   • SSH service is now enabled and running"
-    echo "   • Web terminal provides direct shell access"
-    echo "   • Default SSH credentials may apply"
-    echo ""
-    echo -e "${GREEN}📖 Documentation:${NC}"
-    echo "   README: https://github.com/Pureach22/pwnagotchi-ssh-plugin"
+    echo -e "${CYAN}📖 Need Help?${NC}"
+    echo "   Documentation: https://github.com/Pureach22/pwnagotchi-ssh-plugin"
     echo "   Issues: https://github.com/Pureach22/pwnagotchi-ssh-plugin/issues"
     echo ""
-}
-
-# Uninstall function
-uninstall() {
-    print_header "Uninstalling SSH Web Terminal Plugin"
-    
-    print_step "Removing plugin file..."
-    rm -f "$PLUGIN_DIR/$PLUGIN_FILE"
-    print_success "Plugin file removed"
-    
-    print_step "Removing configuration..."
-    if [ -f "$CONFIG_FILE" ]; then
-        sed -i '/\[main\.plugins\.ssh\]/,/^$/d' "$CONFIG_FILE"
-        sed -i '/main\.plugins\.ssh\./d' "$CONFIG_FILE"
-        print_success "Configuration removed"
-    fi
-    
-    echo -n "Stop SSH service? (y/N): "
-    read -r response
-    if [[ "$response" =~ ^[Yy]$ ]]; then
-        systemctl stop ssh
-        systemctl disable ssh
-        print_success "SSH service stopped and disabled"
-    fi
-    
-    echo -n "Restart Pwnagotchi? (Y/n): "
-    read -r response
-    if [[ ! "$response" =~ ^[Nn]$ ]]; then
-        systemctl restart pwnagotchi
-        print_success "Pwnagotchi restarted"
-    fi
-    
-    print_success "SSH Web Terminal plugin uninstalled"
+    echo -e "${GREEN}Happy hacking! 🚀${NC}"
 }
 
 # Main installation function
 main() {
-    print_header "$PLUGIN_NAME v$PLUGIN_VERSION Installer"
+    print_banner
     
-    # Parse command line arguments
+    # Parse command line arguments for uninstall
     case "${1:-}" in
-        "uninstall"|"remove")
-            check_root
-            uninstall
+        "uninstall"|"remove"|"--uninstall")
+            echo -e "${RED}Uninstall functionality not implemented in one-liner version${NC}"
+            echo -e "${CYAN}To uninstall manually:${NC}"
+            echo "  sudo rm -f /usr/local/share/pwnagotchi/custom-plugins/ssh.py"
+            echo "  sudo sed -i '/main.plugins.ssh/d' /etc/pwnagotchi/config.toml"
+            echo "  sudo systemctl restart pwnagotchi"
             exit 0
             ;;
         "help"|"-h"|"--help")
-            echo "Usage: $0 [command]"
-            echo ""
-            echo "Commands:"
-            echo "  install     Install the plugin (default)"
-            echo "  uninstall   Remove the plugin"
-            echo "  help        Show this help"
-            echo ""
+            echo "SSH Web Terminal Plugin Installer"
+            echo "Usage: curl -sSL https://raw.githubusercontent.com/Pureach22/pwnagotchi-ssh-plugin/main/install.sh | sudo bash"
             exit 0
             ;;
     esac
     
     # Run installation steps
     check_root
-    check_pwnagotchi
-    create_backup
-    install_dependencies
+    check_system
+    install_system_deps
     install_python_deps
     install_plugin
     configure_plugin
     start_services
-    test_installation
-    show_final_info
+    show_results
 }
 
-# Run main function
+# Trap errors and show helpful message
+trap 'echo -e "\n${RED}[✗] Installation failed!${NC}"; echo "Please check the output above and try again."; echo "For help, visit: https://github.com/Pureach22/pwnagotchi-ssh-plugin/issues"' ERR
+
+# Run main function with all arguments
 main "$@"
