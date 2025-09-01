@@ -38,47 +38,96 @@ class WebTerminal:
     def create_terminal(self):
         """Create a new terminal session"""
         try:
-            # Create a new pseudo-terminal
-            master_fd, slave_fd = pty.openpty()
+            import platform
             
-            # Start shell process
-            pid = os.fork()
-            if pid == 0:
-                # Child process - become the shell
-                os.setsid()
-                os.dup2(slave_fd, 0)  # stdin
-                os.dup2(slave_fd, 1)  # stdout
-                os.dup2(slave_fd, 2)  # stderr
-                os.close(master_fd)
-                os.close(slave_fd)
-                
-                # Start bash shell
-                os.execv('/bin/bash', ['/bin/bash', '-l'])
-            else:
-                # Parent process
-                os.close(slave_fd)
-                
-                # Make master_fd non-blocking
-                fcntl.fcntl(master_fd, fcntl.F_SETFL, os.O_NONBLOCK)
+            if platform.system() == "Windows":
+                # Windows development mode - use subprocess
+                import subprocess
+                process = subprocess.Popen(
+                    ['powershell.exe'],
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    bufsize=0
+                )
                 
                 terminal_id = f"term_{self.terminal_counter}"
                 self.terminal_counter += 1
                 
                 self.terminals[terminal_id] = {
-                    'master_fd': master_fd,
-                    'pid': pid,
+                    'process': process,
                     'output_queue': queue.Queue(),
                     'active': True
                 }
                 
-                # Start output reader thread
-                threading.Thread(target=self._read_output, args=(terminal_id,), daemon=True).start()
+                # Start output reader thread for Windows
+                threading.Thread(target=self._read_output_windows, args=(terminal_id,), daemon=True).start()
                 
                 return terminal_id
+            else:
+                # Linux/Unix mode - use pty (original code)
+                # Create a new pseudo-terminal
+                master_fd, slave_fd = pty.openpty()
+                
+                # Start shell process
+                pid = os.fork()
+                if pid == 0:
+                    # Child process - become the shell
+                    os.setsid()
+                    os.dup2(slave_fd, 0)  # stdin
+                    os.dup2(slave_fd, 1)  # stdout
+                    os.dup2(slave_fd, 2)  # stderr
+                    os.close(master_fd)
+                    os.close(slave_fd)
+                    
+                    # Start bash shell
+                    os.execv('/bin/bash', ['/bin/bash', '-l'])
+                else:
+                    # Parent process
+                    os.close(slave_fd)
+                    
+                    # Make master_fd non-blocking
+                    fcntl.fcntl(master_fd, fcntl.F_SETFL, os.O_NONBLOCK)
+                    
+                    terminal_id = f"term_{self.terminal_counter}"
+                    self.terminal_counter += 1
+                    
+                    self.terminals[terminal_id] = {
+                        'master_fd': master_fd,
+                        'pid': pid,
+                        'output_queue': queue.Queue(),
+                        'active': True
+                    }
+                    
+                    # Start output reader thread
+                    threading.Thread(target=self._read_output, args=(terminal_id,), daemon=True).start()
+                    
+                    return terminal_id
                 
         except Exception as e:
             logging.error(f"[SSH] Error creating terminal: {e}")
             return None
+    
+    def _read_output_windows(self, terminal_id):
+        """Read output from Windows subprocess terminal"""
+        terminal = self.terminals.get(terminal_id)
+        if not terminal:
+            return
+            
+        process = terminal['process']
+        output_queue = terminal['output_queue']
+        
+        while terminal['active'] and process.poll() is None:
+            try:
+                line = process.stdout.readline()
+                if line:
+                    output_queue.put(line)
+            except Exception as e:
+                logging.error(f"[SSH] Windows terminal read error: {e}")
+                break
+                
+        terminal['active'] = False
     
     def _read_output(self, terminal_id):
         """Read output from terminal in background thread"""
@@ -108,7 +157,15 @@ class WebTerminal:
         terminal = self.terminals.get(terminal_id)
         if terminal and terminal['active']:
             try:
-                os.write(terminal['master_fd'], data.encode('utf-8'))
+                import platform
+                if platform.system() == "Windows":
+                    # Windows mode - write to subprocess stdin
+                    process = terminal['process']
+                    process.stdin.write(data)
+                    process.stdin.flush()
+                else:
+                    # Linux mode - write to pty
+                    os.write(terminal['master_fd'], data.encode('utf-8'))
                 return True
             except (OSError, IOError):
                 terminal['active'] = False
@@ -148,8 +205,15 @@ class WebTerminal:
         if terminal:
             terminal['active'] = False
             try:
-                os.close(terminal['master_fd'])
-                os.kill(terminal['pid'], 9)  # Force kill the shell process
+                import platform
+                if platform.system() == "Windows":
+                    # Windows mode - terminate subprocess
+                    process = terminal['process']
+                    process.terminate()
+                else:
+                    # Linux mode - close pty and kill process
+                    os.close(terminal['master_fd'])
+                    os.kill(terminal['pid'], 9)  # Force kill the shell process
             except (OSError, ProcessLookupError):
                 pass
             del self.terminals[terminal_id]
@@ -563,12 +627,12 @@ class SSH(plugins.Plugin):
             <a href="/plugins/ssh/terminal">Web Terminal</a>
         </div>
 
-        <div id="status" class="status disconnected">
-            <strong>Status:</strong> Disconnected
+        <div id="status" class="status connected">
+            <strong>Status:</strong> Auto-connecting...
         </div>
 
         <div class="terminal-controls">
-            <button id="connectBtn" class="button btn-primary">Connect Terminal</button>
+            <button id="connectBtn" class="button btn-primary" style="display: none;">Connect Terminal</button>
             <button id="disconnectBtn" class="button btn-danger" disabled>Disconnect</button>
             <button id="clearBtn" class="button btn-secondary" disabled>Clear</button>
         </div>
@@ -577,7 +641,7 @@ class SSH(plugins.Plugin):
             <div class="terminal-header">
                 Web Terminal - Type commands and press Enter
             </div>
-            <textarea id="terminal" placeholder="Click 'Connect Terminal' to start a shell session..." readonly></textarea>
+            <textarea id="terminal" placeholder="Terminal connecting automatically..." readonly></textarea>
         </div>
 
         <div style="margin-top: 20px; padding: 15px; background: #e9ecef; border-radius: 4px;">
@@ -741,6 +805,11 @@ class SSH(plugins.Plugin):
                     })
                 }).catch(console.error);
             }
+        });
+        
+        // Auto-connect when page loads
+        window.addEventListener('load', () => {
+            connectBtn.click();
         });
     </script>
 </body>
