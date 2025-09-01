@@ -108,6 +108,9 @@ class SSHPlugin(plugins.Plugin):
     def on_webhook(self, path, request):
         """Handle WebUI requests for SSH management"""
         try:
+            # Debug logging to help troubleshoot 404 issues
+            logging.info(f"[SSH] Webhook request: path='{path}', method={request.method}")
+            
             if path == "/" or path == "":
                 return self.render_dashboard()
             elif path == "config":
@@ -126,8 +129,12 @@ class SSHPlugin(plugins.Plugin):
                 return self.stop_ssh_api()
             elif path == "api/connections":
                 return self.get_connections_api()
+            elif path == "test":
+                # Simple test endpoint to verify plugin is working
+                return "<html><body><h1>SSH Plugin Test</h1><p>Plugin is working correctly!</p></body></html>"
             else:
-                abort(404)
+                logging.warning(f"[SSH] 404 - Unknown path: '{path}'")
+                return f"<html><body><h1>404 Not Found</h1><p>Path '{path}' not found in SSH plugin.</p><p>Available paths: /, config, keys, api/status, api/start, api/stop, api/connections, test</p></body></html>", 404
         except Exception as e:
             logging.error(f"[SSH] Webhook error: {e}")
             return f"<html><body><h1>Error</h1><p>{str(e)}</p></body></html>", 500
