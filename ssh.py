@@ -106,9 +106,9 @@ class SSH(plugins.Plugin):
         if not self.ready:
             return "Plugin not ready"
 
+        logging.info(f"[SSH] Webhook: path='{path}', method={getattr(request, 'method', 'GET')}")
+        
         try:
-            logging.info(f"[SSH] Webhook: path='{path}', method={getattr(request, 'method', 'GET')}")
-            
             if path == "/" or path == "" or path is None:
                 return self.render_dashboard()
             elif path == "config":
@@ -134,11 +134,12 @@ class SSH(plugins.Plugin):
                 return jsonify(self.get_active_connections())
             elif path == "test":
                 return "<html><body><h1>SSH Plugin Test</h1><p>Plugin working!</p></body></html>"
-            else:
-                abort(404)
         except Exception as e:
             logging.error(f"[SSH] Webhook error: {e}")
             return f"<html><body><h1>Error</h1><p>{str(e)}</p></body></html>", 500
+        
+        # 404 case - handle outside of try/catch to avoid catching abort()
+        abort(404)
 
     def check_ssh_status(self):
         """Check if SSH service is running"""
