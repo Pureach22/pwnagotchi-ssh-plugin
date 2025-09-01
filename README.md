@@ -46,8 +46,9 @@ Add, remove, and manage SSH public keys.
 git clone https://github.com/Pureach22/pwnagotchi-ssh-plugin.git
 cd pwnagotchi-ssh-plugin
 
-# 2. Install dependencies
-sudo pip3 install -r requirements.txt
+# 2. Install dependencies using apt (recommended)
+sudo apt update
+sudo apt install python3-paramiko python3-psutil python3-cryptography
 
 # 3. Copy to custom plugins directory
 sudo mkdir -p /usr/local/share/pwnagotchi/custom-plugins/
@@ -69,14 +70,21 @@ sudo mkdir -p /usr/local/share/pwnagotchi/custom-plugins/
 sudo wget -O /usr/local/share/pwnagotchi/custom-plugins/ssh_plugin.py \
   https://raw.githubusercontent.com/Pureach22/pwnagotchi-ssh-plugin/main/ssh_plugin.py
 
-# Install dependencies
-sudo pip3 install paramiko psutil cryptography
+# Install dependencies using apt (recommended)
+sudo apt update
+sudo apt install python3-paramiko python3-psutil python3-cryptography
 
 # Enable plugin in config
 echo "main.plugins.ssh.enabled = true" | sudo tee -a /etc/pwnagotchi/config.toml
 
 # Restart service
 sudo systemctl restart pwnagotchi
+```
+
+### Alternative: Using pip with override (not recommended)
+```bash
+# Only if apt packages are not available
+sudo pip3 install paramiko psutil cryptography --break-system-packages
 ```
 
 ## ⚙️ Configuration
@@ -169,6 +177,15 @@ For detailed information about the plugin features and configuration options, se
 
 ### Common Issues
 
+**"externally-managed-environment" error:**
+```bash
+# Use apt instead of pip for system packages
+sudo apt install python3-paramiko python3-psutil python3-cryptography
+
+# OR override pip (not recommended)
+sudo pip3 install paramiko psutil cryptography --break-system-packages
+```
+
 **Plugin not loading:**
 ```bash
 # Check Pwnagotchi logs
@@ -194,8 +211,23 @@ curl http://localhost:8080/plugins/ssh/
 
 - **Pwnagotchi**: Latest version
 - **Python**: 3.7+
-- **Dependencies**: paramiko, psutil, cryptography
+- **Dependencies**: 
+  - `python3-paramiko` (SSH client library)
+  - `python3-psutil` (System monitoring)
+  - `python3-cryptography` (Cryptographic functions)
 - **SSH Server**: OpenSSH (automatically installed)
+
+### Installing Dependencies
+
+**Recommended (using apt):**
+```bash
+sudo apt install python3-paramiko python3-psutil python3-cryptography
+```
+
+**Alternative (using pip):**
+```bash
+sudo pip3 install paramiko psutil cryptography --break-system-packages
+```
 
 ## 📄 License
 
