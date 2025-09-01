@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
-SSH Plugin for Pwnagotchi WebUI
-Provides SSH server management and monitoring through the web interface
+SSH Web Terminal Plugin for Pwnagotchi Torch
+Provides a modern web-based terminal interface for SSH access
+Compatible with pwnagotchi-torch-plugins architecture
 """
 
 import logging
@@ -9,295 +10,353 @@ import subprocess
 import json
 import os
 import time
-import re
+import threading
+import queue
+import signal
 import pty
 import select
 import termios
 import struct
 import fcntl
-import threading
-import queue
 from datetime import datetime
 
 import pwnagotchi
 import pwnagotchi.plugins as plugins
 import pwnagotchi.ui.fonts as fonts
-from pwnagotchi.ui.components import LabeledValue, Text
+from pwnagotchi.ui.components import LabeledValue
 from pwnagotchi.ui.view import BLACK
 
 from flask import render_template_string, request, jsonify, abort
 
 
-class WebTerminal:
-    """Web-based terminal emulator using pty"""
+class WebTerminalSession:
+    """Enhanced web terminal session with better error handling and features"""
     
-    def __init__(self):
-        self.terminals = {}  # Store active terminal sessions
-        self.terminal_counter = 0
+    def __init__(self, session_id):
+        self.session_id = session_id
+        self.active = True
+        self.created_at = time.time()
+        self.last_activity = time.time()
+        self.output_buffer = queue.Queue(maxsize=1000)
+        self.command_history = []
+        
+        # Platform-specific initialization
+        import platform
+        self.platform = platform.system().lower()
+        
+        if self.platform == "windows":
+            self._init_windows_terminal()
+        else:
+            self._init_unix_terminal()
     
-    def create_terminal(self):
-        """Create a new terminal session"""
+    def _init_windows_terminal(self):
+        """Initialize Windows terminal using PowerShell"""
         try:
-            import platform
-            
-            if platform.system() == "Windows":
-                # Windows development mode - use subprocess
-                import subprocess
-                
-                # Try PowerShell with better error handling
+            # Try PowerShell Core first, then Windows PowerShell
+            for ps_cmd in ['pwsh.exe', 'powershell.exe']:
                 try:
-                    process = subprocess.Popen(
-                        ['powershell.exe', '-NoProfile', '-Command', '-'],
+                    self.process = subprocess.Popen(
+                        [ps_cmd, '-NoLogo', '-NoProfile', '-Command', '-'],
                         stdin=subprocess.PIPE,
                         stdout=subprocess.PIPE,
                         stderr=subprocess.STDOUT,
                         text=True,
                         bufsize=0,
-                        universal_newlines=True
+                        creationflags=subprocess.CREATE_NEW_PROCESS_GROUP
                     )
+                    break
                 except FileNotFoundError:
-                    # Fallback to cmd.exe if PowerShell not found
-                    process = subprocess.Popen(
-                        ['cmd.exe'],
-                        stdin=subprocess.PIPE,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.STDOUT,
-                        text=True,
-                        bufsize=0,
-                        universal_newlines=True
-                    )
-                
-                terminal_id = f"term_{self.terminal_counter}"
-                self.terminal_counter += 1
-                
-                self.terminals[terminal_id] = {
-                    'process': process,
-                    'output_queue': queue.Queue(),
-                    'active': True,
-                    'platform': 'windows'
-                }
-                
-                # Start output reader thread for Windows
-                threading.Thread(target=self._read_output_windows, args=(terminal_id,), daemon=True).start()
-                
-                logging.info(f"[SSH] Created Windows terminal session: {terminal_id}")
-                return terminal_id
+                    continue
             else:
-                # Linux/Unix mode - use pty (original code)
-                # Create a new pseudo-terminal
-                master_fd, slave_fd = pty.openpty()
-                
-                # Start shell process
-                pid = os.fork()
-                if pid == 0:
-                    # Child process - become the shell
-                    os.setsid()
-                    os.dup2(slave_fd, 0)  # stdin
-                    os.dup2(slave_fd, 1)  # stdout
-                    os.dup2(slave_fd, 2)  # stderr
-                    os.close(master_fd)
-                    os.close(slave_fd)
-                    
-                    # Start bash shell
-                    os.execv('/bin/bash', ['/bin/bash', '-l'])
-                else:
-                    # Parent process
-                    os.close(slave_fd)
-                    
-                    # Make master_fd non-blocking
-                    fcntl.fcntl(master_fd, fcntl.F_SETFL, os.O_NONBLOCK)
-                    
-                    terminal_id = f"term_{self.terminal_counter}"
-                    self.terminal_counter += 1
-                    
-                    self.terminals[terminal_id] = {
-                        'master_fd': master_fd,
-                        'pid': pid,
-                        'output_queue': queue.Queue(),
-                        'active': True
-                    }
-                    
-                    # Start output reader thread
-                    threading.Thread(target=self._read_output, args=(terminal_id,), daemon=True).start()
-                    
-                    return terminal_id
-                
-        except Exception as e:
-            logging.error(f"[SSH] Error creating terminal: {e}")
-            return None
-    
-    def _read_output_windows(self, terminal_id):
-        """Read output from Windows subprocess terminal"""
-        terminal = self.terminals.get(terminal_id)
-        if not terminal:
-            logging.error(f"[SSH] Terminal {terminal_id} not found for output reading")
-            return
+                # Fallback to cmd.exe
+                self.process = subprocess.Popen(
+                    ['cmd.exe'],
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    bufsize=0,
+                    creationflags=subprocess.CREATE_NEW_PROCESS_GROUP
+                )
             
-        process = terminal['process']
-        output_queue = terminal['output_queue']
-        
+            # Start output reader
+            self.output_thread = threading.Thread(
+                target=self._read_windows_output, 
+                daemon=True
+            )
+            self.output_thread.start()
+            
+            logging.info(f"[SSH-WebTerm] Windows terminal session {self.session_id} initialized")
+            
+        except Exception as e:
+            logging.error(f"[SSH-WebTerm] Failed to initialize Windows terminal: {e}")
+            self.active = False
+    
+    def _init_unix_terminal(self):
+        """Initialize Unix/Linux terminal using pty"""
         try:
-            # Send initial command to get a prompt
-            process.stdin.write('echo Terminal Ready\n')
-            process.stdin.flush()
-        except Exception as e:
-            logging.error(f"[SSH] Failed to send initial command: {e}")
-        
-        while terminal['active'] and process.poll() is None:
-            try:
-                # Use a timeout to avoid blocking indefinitely
-                import select
-                import sys
-                
-                if sys.platform == "win32":
-                    # On Windows, just try to read with a timeout approach
-                    line = process.stdout.readline()
-                    if line:
-                        output_queue.put(line.rstrip('\n'))
-                    else:
-                        time.sleep(0.1)  # Small delay to prevent busy waiting
-                else:
-                    # For non-Windows systems, use select
-                    ready, _, _ = select.select([process.stdout], [], [], 0.1)
-                    if ready:
-                        line = process.stdout.readline()
-                        if line:
-                            output_queue.put(line.rstrip('\n'))
-                            
-            except Exception as e:
-                logging.error(f"[SSH] Windows terminal read error: {e}")
-                break
-                
-        terminal['active'] = False
-        logging.info(f"[SSH] Windows terminal output reader stopped for {terminal_id}")
-    
-    def _read_output(self, terminal_id):
-        """Read output from terminal in background thread"""
-        terminal = self.terminals.get(terminal_id)
-        if not terminal:
-            return
+            # Create pseudo-terminal
+            self.master_fd, slave_fd = pty.openpty()
             
-        master_fd = terminal['master_fd']
-        output_queue = terminal['output_queue']
-        
-        while terminal['active']:
+            # Fork process
+            self.pid = os.fork()
+            if self.pid == 0:
+                # Child process - become shell
+                os.setsid()
+                os.dup2(slave_fd, 0)  # stdin
+                os.dup2(slave_fd, 1)  # stdout
+                os.dup2(slave_fd, 2)  # stderr
+                os.close(self.master_fd)
+                os.close(slave_fd)
+                
+                # Set environment variables
+                os.environ['TERM'] = 'xterm-256color'
+                os.environ['SHELL'] = '/bin/bash'
+                os.environ['PS1'] = r'\u@\h:\w$ '
+                
+                # Execute shell
+                os.execv('/bin/bash', ['/bin/bash', '-l'])
+            else:
+                # Parent process
+                os.close(slave_fd)
+                
+                # Make master non-blocking
+                fcntl.fcntl(self.master_fd, fcntl.F_SETFL, os.O_NONBLOCK)
+                
+                # Start output reader
+                self.output_thread = threading.Thread(
+                    target=self._read_unix_output, 
+                    daemon=True
+                )
+                self.output_thread.start()
+                
+                logging.info(f"[SSH-WebTerm] Unix terminal session {self.session_id} initialized")
+                
+        except Exception as e:
+            logging.error(f"[SSH-WebTerm] Failed to initialize Unix terminal: {e}")
+            self.active = False
+    
+    def _read_windows_output(self):
+        """Read output from Windows subprocess"""
+        while self.active and self.process.poll() is None:
             try:
-                ready, _, _ = select.select([master_fd], [], [], 0.1)
+                line = self.process.stdout.readline()
+                if line:
+                    self.output_buffer.put(line.rstrip('\r\n'))
+                    self.last_activity = time.time()
+                else:
+                    time.sleep(0.05)  # Prevent busy waiting
+            except Exception as e:
+                logging.error(f"[SSH-WebTerm] Windows output read error: {e}")
+                break
+        
+        self.active = False
+    
+    def _read_unix_output(self):
+        """Read output from Unix pty"""
+        while self.active:
+            try:
+                ready, _, _ = select.select([self.master_fd], [], [], 0.1)
                 if ready:
-                    data = os.read(master_fd, 1024)
+                    data = os.read(self.master_fd, 4096)
                     if data:
-                        output_queue.put(data.decode('utf-8', errors='ignore'))
+                        output = data.decode('utf-8', errors='ignore')
+                        self.output_buffer.put(output)
+                        self.last_activity = time.time()
                     else:
                         break
-            except (OSError, IOError):
+            except (OSError, IOError) as e:
+                logging.error(f"[SSH-WebTerm] Unix output read error: {e}")
                 break
         
-        terminal['active'] = False
+        self.active = False
     
-    def write_input(self, terminal_id, data):
-        """Write input to terminal"""
-        terminal = self.terminals.get(terminal_id)
-        if terminal and terminal['active']:
-            try:
-                import platform
-                if platform.system() == "Windows":
-                    # Windows mode - write to subprocess stdin
-                    process = terminal['process']
-                    process.stdin.write(data)
-                    process.stdin.flush()
-                else:
-                    # Linux mode - write to pty
-                    os.write(terminal['master_fd'], data.encode('utf-8'))
-                return True
-            except (OSError, IOError):
-                terminal['active'] = False
-        return False
-    
-    def read_output(self, terminal_id):
-        """Read available output from terminal"""
-        terminal = self.terminals.get(terminal_id)
-        if not terminal:
-            return ""
+    def write_input(self, data):
+        """Send input to terminal"""
+        if not self.active:
+            return False
+        
+        try:
+            # Add to command history if it's a complete command
+            if data.endswith('\n') and data.strip():
+                cmd = data.strip()
+                if cmd not in self.command_history:
+                    self.command_history.append(cmd)
+                    # Keep only last 50 commands
+                    if len(self.command_history) > 50:
+                        self.command_history.pop(0)
             
+            if self.platform == "windows":
+                self.process.stdin.write(data)
+                self.process.stdin.flush()
+            else:
+                os.write(self.master_fd, data.encode('utf-8'))
+            
+            self.last_activity = time.time()
+            return True
+            
+        except (OSError, IOError, BrokenPipeError) as e:
+            logging.error(f"[SSH-WebTerm] Input write error: {e}")
+            self.active = False
+            return False
+    
+    def read_output(self):
+        """Get accumulated output"""
         output = ""
         try:
-            while not terminal['output_queue'].empty():
-                output += terminal['output_queue'].get_nowait()
+            while not self.output_buffer.empty():
+                output += self.output_buffer.get_nowait()
         except queue.Empty:
             pass
         
         return output
     
-    def resize_terminal(self, terminal_id, rows, cols):
+    def resize(self, rows, cols):
         """Resize terminal window"""
-        terminal = self.terminals.get(terminal_id)
-        if terminal and terminal['active']:
-            try:
-                # Set terminal size
-                winsize = struct.pack('HHHH', rows, cols, 0, 0)
-                fcntl.ioctl(terminal['master_fd'], termios.TIOCSWINSZ, winsize)
-                return True
-            except (OSError, IOError):
-                pass
-        return False
+        if not self.active or self.platform == "windows":
+            return False
+        
+        try:
+            winsize = struct.pack('HHHH', rows, cols, 0, 0)
+            fcntl.ioctl(self.master_fd, termios.TIOCSWINSZ, winsize)
+            return True
+        except (OSError, IOError):
+            return False
     
-    def close_terminal(self, terminal_id):
+    def close(self):
         """Close terminal session"""
-        terminal = self.terminals.get(terminal_id)
-        if terminal:
-            terminal['active'] = False
+        self.active = False
+        
+        try:
+            if self.platform == "windows":
+                self.process.terminate()
+                try:
+                    self.process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    self.process.kill()
+            else:
+                os.close(self.master_fd)
+                try:
+                    os.kill(self.pid, signal.SIGTERM)
+                    os.waitpid(self.pid, 0)
+                except (OSError, ProcessLookupError):
+                    pass
+        except Exception as e:
+            logging.error(f"[SSH-WebTerm] Error closing session: {e}")
+    
+    def is_alive(self):
+        """Check if session is still active"""
+        if not self.active:
+            return False
+        
+        # Check for timeout (30 minutes)
+        if time.time() - self.last_activity > 1800:
+            self.close()
+            return False
+        
+        if self.platform == "windows":
+            return self.process.poll() is None
+        else:
             try:
-                import platform
-                if platform.system() == "Windows":
-                    # Windows mode - terminate subprocess
-                    process = terminal['process']
-                    process.terminate()
-                else:
-                    # Linux mode - close pty and kill process
-                    os.close(terminal['master_fd'])
-                    os.kill(terminal['pid'], 9)  # Force kill the shell process
-            except (OSError, ProcessLookupError):
-                pass
-            del self.terminals[terminal_id]
+                os.kill(self.pid, 0)
+                return True
+            except ProcessLookupError:
+                return False
+
+
+class WebTerminalManager:
+    """Manages multiple web terminal sessions"""
+    
+    def __init__(self):
+        self.sessions = {}
+        self.session_counter = 0
+        self.cleanup_thread = threading.Thread(target=self._cleanup_sessions, daemon=True)
+        self.cleanup_thread.start()
+    
+    def create_session(self):
+        """Create new terminal session"""
+        session_id = f"term_{int(time.time())}_{self.session_counter}"
+        self.session_counter += 1
+        
+        session = WebTerminalSession(session_id)
+        if session.active:
+            self.sessions[session_id] = session
+            logging.info(f"[SSH-WebTerm] Created session: {session_id}")
+            return session_id
+        else:
+            logging.error(f"[SSH-WebTerm] Failed to create session: {session_id}")
+            return None
+    
+    def get_session(self, session_id):
+        """Get existing session"""
+        return self.sessions.get(session_id)
+    
+    def close_session(self, session_id):
+        """Close and remove session"""
+        session = self.sessions.get(session_id)
+        if session:
+            session.close()
+            del self.sessions[session_id]
+            logging.info(f"[SSH-WebTerm] Closed session: {session_id}")
+    
+    def _cleanup_sessions(self):
+        """Background cleanup of dead sessions"""
+        while True:
+            try:
+                time.sleep(60)  # Check every minute
+                dead_sessions = []
+                
+                for session_id, session in self.sessions.items():
+                    if not session.is_alive():
+                        dead_sessions.append(session_id)
+                
+                for session_id in dead_sessions:
+                    self.close_session(session_id)
+                    
+            except Exception as e:
+                logging.error(f"[SSH-WebTerm] Session cleanup error: {e}")
 
 
 class SSH(plugins.Plugin):
     __author__ = 'Pwnagotchi Community'
-    __version__ = '1.0.0'
+    __version__ = '2.0.0'
     __license__ = 'GPL3'
-    __description__ = 'SSH access and management plugin for Pwnagotchi WebUI'
+    __description__ = 'Advanced SSH Web Terminal for Pwnagotchi Torch'
 
     def __init__(self):
         self.options = {
-            'auto_start': True,
+            'enabled': True,
             'display_on_screen': True,
             'ssh_x_coord': 160,
             'ssh_y_coord': 66,
-            'connection_timeout': 30,
-            'enable_web_terminal': True
+            'auto_start_ssh': True,
+            'enable_web_terminal': True,
+            'terminal_theme': 'dark',
+            'max_sessions': 5
         }
+        
         self.ssh_status = False
         self.active_connections = 0
         self.ready = False
-        self.web_terminal = WebTerminal()
+        self.terminal_manager = WebTerminalManager()
 
     def on_loaded(self):
-        """Plugin loaded callback"""
-        logging.info("[SSH] SSH plugin loaded.")
+        """Plugin initialization"""
+        logging.info("[SSH-WebTerm] SSH Web Terminal plugin loaded")
         
-        # Check initial SSH status
-        self.ssh_status = self.check_ssh_status()
-        logging.info(f"[SSH] SSH service status: {'active' if self.ssh_status else 'inactive'}")
+        # Check SSH service status
+        self.ssh_status = self._check_ssh_status()
+        logging.info(f"[SSH-WebTerm] SSH service status: {'active' if self.ssh_status else 'inactive'}")
         
         # Auto-start SSH if configured
-        if self.options.get('auto_start', True) and not self.ssh_status:
-            logging.info("[SSH] Auto-starting SSH service...")
-            self.start_ssh_service()
+        if self.options.get('auto_start_ssh', True) and not self.ssh_status:
+            logging.info("[SSH-WebTerm] Auto-starting SSH service...")
+            self._start_ssh_service()
         
         self.ready = True
 
     def on_ui_setup(self, ui):
-        """Setup UI elements"""
+        """Setup UI display elements"""
         if not self.options.get('display_on_screen', True):
             return
             
@@ -308,575 +367,1006 @@ class SSH(plugins.Plugin):
                     color=BLACK,
                     label='SSH',
                     value='Starting...',
-                    position=(int(self.options.get('ssh_x_coord', 160)),
-                             int(self.options.get('ssh_y_coord', 66))),
+                    position=(
+                        int(self.options.get('ssh_x_coord', 160)),
+                        int(self.options.get('ssh_y_coord', 66))
+                    ),
                     label_font=fonts.Small,
                     text_font=fonts.Small
                 )
             )
 
     def on_ui_update(self, ui):
-        """Update UI with current status"""
+        """Update UI display"""
         if not self.options.get('display_on_screen', True):
             return
             
-        current_status = self.check_ssh_status()
-        self.active_connections = len(self.get_active_connections())
+        current_status = self._check_ssh_status()
+        self.active_connections = len(self._get_ssh_connections())
         
-        status_text = "Active" if current_status else "Inactive"
-        if current_status and self.active_connections > 0:
-            status_text = f"Active ({self.active_connections})"
+        if current_status:
+            if self.active_connections > 0:
+                status_text = f"ON[{self.active_connections}]"
+            else:
+                status_text = "ON"
+        else:
+            status_text = "OFF"
         
         ui.set('ssh_status', status_text)
 
     def on_unload(self, ui):
-        """Plugin unload callback"""
+        """Plugin cleanup"""
         if self.options.get('display_on_screen', True):
             with ui._lock:
                 ui.remove_element('ssh_status')
-        logging.info("[SSH] SSH plugin unloaded.")
+        
+        # Close all terminal sessions
+        for session_id in list(self.terminal_manager.sessions.keys()):
+            self.terminal_manager.close_session(session_id)
+        
+        logging.info("[SSH-WebTerm] SSH Web Terminal plugin unloaded")
 
     def on_webhook(self, path, request):
-        """Handle WebUI requests for SSH management"""
+        """Handle web requests"""
         if not self.ready:
-            return "Plugin not ready"
+            abort(503)  # Service Unavailable
 
-        logging.info(f"[SSH] Webhook: path='{path}', method={getattr(request, 'method', 'GET')}")
+        logging.info(f"[SSH-WebTerm] Webhook: {request.method} {path}")
         
         try:
+            # Main dashboard
             if path == "/" or path == "" or path is None:
-                return self.render_dashboard()
+                return self._render_dashboard()
+            
+            # Web terminal page
             elif path == "terminal":
-                return self.render_terminal_page()
-            elif path == "api/status":
+                return self._render_terminal()
+            
+            # API endpoints
+            elif path == "api/ssh/status":
                 return jsonify({
-                    'status': self.check_ssh_status(),
-                    'connections': len(self.get_active_connections())
+                    'ssh_active': self._check_ssh_status(),
+                    'connections': len(self._get_ssh_connections()),
+                    'uptime': self._get_ssh_uptime()
                 })
-            elif path == "api/start":
-                success = self.start_ssh_service()
+            
+            elif path == "api/ssh/start":
+                success = self._start_ssh_service()
                 return jsonify({'success': success})
-            elif path == "api/stop":
-                success = self.stop_ssh_service()
+            
+            elif path == "api/ssh/stop":
+                success = self._stop_ssh_service()
                 return jsonify({'success': success})
-            elif path == "api/connections":
-                return jsonify(self.get_active_connections())
+            
+            # Terminal API
             elif path == "api/terminal/create":
-                try:
-                    terminal_id = self.web_terminal.create_terminal()
-                    if terminal_id:
-                        logging.info(f"[SSH] Successfully created terminal: {terminal_id}")
-                        return jsonify({'terminal_id': terminal_id, 'success': True, 'message': 'Terminal created successfully'})
-                    else:
-                        logging.error("[SSH] Failed to create terminal - create_terminal returned None")
-                        return jsonify({'terminal_id': None, 'success': False, 'message': 'Failed to create terminal session'})
-                except Exception as e:
-                    error_msg = f"Terminal creation error: {str(e)}"
-                    logging.error(f"[SSH] {error_msg}")
-                    return jsonify({'terminal_id': None, 'success': False, 'message': error_msg})
+                session_id = self.terminal_manager.create_session()
+                return jsonify({
+                    'success': session_id is not None,
+                    'session_id': session_id,
+                    'message': 'Terminal session created' if session_id else 'Failed to create session'
+                })
+            
             elif path.startswith("api/terminal/") and "/input" in path:
-                terminal_id = path.split("/")[2]
+                session_id = path.split("/")[2]
                 data = request.get_json() or {}
                 input_data = data.get('input', '')
-                success = self.web_terminal.write_input(terminal_id, input_data)
-                return jsonify({'success': success})
+                
+                session = self.terminal_manager.get_session(session_id)
+                if session:
+                    success = session.write_input(input_data)
+                    return jsonify({'success': success})
+                else:
+                    return jsonify({'success': False, 'error': 'Session not found'})
+            
             elif path.startswith("api/terminal/") and "/output" in path:
-                terminal_id = path.split("/")[2]
-                output = self.web_terminal.read_output(terminal_id)
-                return jsonify({'output': output})
+                session_id = path.split("/")[2]
+                session = self.terminal_manager.get_session(session_id)
+                
+                if session:
+                    output = session.read_output()
+                    return jsonify({'output': output, 'active': session.is_alive()})
+                else:
+                    return jsonify({'output': '', 'active': False, 'error': 'Session not found'})
+            
             elif path.startswith("api/terminal/") and "/resize" in path:
-                terminal_id = path.split("/")[2]
+                session_id = path.split("/")[2]
                 data = request.get_json() or {}
                 rows = data.get('rows', 24)
                 cols = data.get('cols', 80)
-                success = self.web_terminal.resize_terminal(terminal_id, rows, cols)
-                return jsonify({'success': success})
+                
+                session = self.terminal_manager.get_session(session_id)
+                if session:
+                    success = session.resize(rows, cols)
+                    return jsonify({'success': success})
+                else:
+                    return jsonify({'success': False, 'error': 'Session not found'})
+            
             elif path.startswith("api/terminal/") and "/close" in path:
-                terminal_id = path.split("/")[2]
-                self.web_terminal.close_terminal(terminal_id)
+                session_id = path.split("/")[2]
+                self.terminal_manager.close_session(session_id)
                 return jsonify({'success': True})
-            elif path == "test":
-                return "<html><body><h1>SSH Plugin Test</h1><p>Plugin working!</p></body></html>"
+            
+            elif path.startswith("api/terminal/") and "/history" in path:
+                session_id = path.split("/")[2]
+                session = self.terminal_manager.get_session(session_id)
+                
+                if session:
+                    return jsonify({
+                        'history': session.command_history,
+                        'success': True
+                    })
+                else:
+                    return jsonify({'history': [], 'success': False})
+
         except Exception as e:
-            logging.error(f"[SSH] Webhook error: {e}")
-            return f"<html><body><h1>Error</h1><p>{str(e)}</p></body></html>", 500
+            logging.error(f"[SSH-WebTerm] Webhook error: {e}")
+            return jsonify({'error': str(e)}), 500
         
-        # 404 case - handle outside of try/catch to avoid catching abort()
+        # 404 for unhandled paths
         abort(404)
 
-    def check_ssh_status(self):
-        """Check if SSH service is running"""
+    def _check_ssh_status(self):
+        """Check SSH service status"""
         try:
-            result = subprocess.run(['systemctl', 'is-active', 'ssh'], 
-                                  capture_output=True, text=True)
+            result = subprocess.run(
+                ['systemctl', 'is-active', 'ssh'], 
+                capture_output=True, 
+                text=True,
+                timeout=5
+            )
             return result.returncode == 0 and result.stdout.strip() == 'active'
-        except Exception as e:
-            logging.error(f"[SSH] Error checking SSH status: {e}")
+        except Exception:
             return False
 
-    def start_ssh_service(self):
+    def _start_ssh_service(self):
         """Start SSH service"""
         try:
-            result = subprocess.run(['systemctl', 'start', 'ssh'], 
-                                  capture_output=True, text=True)
+            result = subprocess.run(
+                ['sudo', 'systemctl', 'start', 'ssh'], 
+                capture_output=True, 
+                text=True,
+                timeout=10
+            )
             success = result.returncode == 0
             if success:
-                logging.info("[SSH] SSH service started successfully")
+                logging.info("[SSH-WebTerm] SSH service started")
                 self.ssh_status = True
-            else:
-                logging.error(f"[SSH] Failed to start SSH: {result.stderr}")
             return success
         except Exception as e:
-            logging.error(f"[SSH] Error starting SSH: {e}")
+            logging.error(f"[SSH-WebTerm] Failed to start SSH: {e}")
             return False
 
-    def stop_ssh_service(self):
+    def _stop_ssh_service(self):
         """Stop SSH service"""
         try:
-            result = subprocess.run(['systemctl', 'stop', 'ssh'], 
-                                  capture_output=True, text=True)
+            result = subprocess.run(
+                ['sudo', 'systemctl', 'stop', 'ssh'], 
+                capture_output=True, 
+                text=True,
+                timeout=10
+            )
             success = result.returncode == 0
             if success:
-                logging.info("[SSH] SSH service stopped successfully")
+                logging.info("[SSH-WebTerm] SSH service stopped")
                 self.ssh_status = False
-            else:
-                logging.error(f"[SSH] Failed to stop SSH: {result.stderr}")
             return success
         except Exception as e:
-            logging.error(f"[SSH] Error stopping SSH: {e}")
+            logging.error(f"[SSH-WebTerm] Failed to stop SSH: {e}")
             return False
 
-    def get_active_connections(self):
-        """Get list of active SSH connections"""
+    def _get_ssh_connections(self):
+        """Get active SSH connections"""
         connections = []
         try:
-            result = subprocess.run(['ss', '-tuln'], capture_output=True, text=True)
+            result = subprocess.run(
+                ['ss', '-tuln'], 
+                capture_output=True, 
+                text=True,
+                timeout=5
+            )
             if result.returncode == 0:
                 for line in result.stdout.split('\n'):
-                    if ':22' in line and 'LISTEN' not in line:
+                    if ':22' in line and 'LISTEN' not in line and 'ESTAB' in line:
                         parts = line.split()
                         if len(parts) >= 5:
-                            local_addr = parts[4]
-                            remote_addr = parts[5] if len(parts) > 5 else 'Unknown'
                             connections.append({
-                                'local': local_addr,
-                                'remote': remote_addr,
-                                'time': time.strftime('%H:%M:%S')
+                                'local': parts[3],
+                                'remote': parts[4],
+                                'time': datetime.now().strftime('%H:%M:%S')
                             })
-        except Exception as e:
-            logging.error(f"[SSH] Error getting connections: {e}")
+        except Exception:
+            pass
         
         return connections
 
-    def render_dashboard(self):
-        """Render main SSH dashboard"""
-        status = self.check_ssh_status()
-        connections = self.get_active_connections()
+    def _get_ssh_uptime(self):
+        """Get SSH service uptime"""
+        try:
+            result = subprocess.run(
+                ['systemctl', 'show', 'ssh', '--property=ActiveEnterTimestamp'], 
+                capture_output=True, 
+                text=True,
+                timeout=5
+            )
+            if result.returncode == 0:
+                return result.stdout.strip().split('=')[1]
+        except Exception:
+            pass
+        return "Unknown"
+
+    def _render_dashboard(self):
+        """Render main dashboard"""
+        ssh_active = self._check_ssh_status()
+        connections = self._get_ssh_connections()
+        active_terminals = len(self.terminal_manager.sessions)
         
         template = """
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>SSH Management - {{ pwnagotchi_name }}</title>
-    <meta charset="utf-8">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SSH Web Terminal - {{ pwnagotchi_name }}</title>
     <style>
-        body { font-family: monospace; margin: 20px; background: #f0f0f0; }
-        .container { max-width: 800px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; }
-        .status { padding: 10px; margin: 10px 0; border-radius: 4px; }
-        .active { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
-        .inactive { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
-        .button { padding: 8px 16px; margin: 4px; border: none; border-radius: 4px; cursor: pointer; }
-        .btn-primary { background: #007bff; color: white; }
-        .btn-secondary { background: #6c757d; color: white; }
-        .btn-success { background: #28a745; color: white; }
-        .btn-danger { background: #dc3545; color: white; }
-        table { width: 100%; border-collapse: collapse; margin: 10px 0; }
-        th, td { padding: 8px; text-align: left; border-bottom: 1px solid #ddd; }
-        th { background-color: #f2f2f2; }
-        .nav { margin: 20px 0; }
-        .nav a { margin-right: 15px; text-decoration: none; color: #007bff; }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace; 
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: #333;
+            min-height: 100vh;
+        }
+        .container { 
+            max-width: 1200px; 
+            margin: 0 auto; 
+            padding: 20px;
+        }
+        .header {
+            background: rgba(255,255,255,0.95);
+            padding: 20px;
+            border-radius: 15px;
+            margin-bottom: 20px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.1);
+            backdrop-filter: blur(10px);
+        }
+        .header h1 {
+            font-size: 2.5em;
+            color: #2c3e50;
+            margin-bottom: 10px;
+        }
+        .header p {
+            color: #7f8c8d;
+            font-size: 1.1em;
+        }
+        .card {
+            background: rgba(255,255,255,0.95);
+            border-radius: 15px;
+            padding: 25px;
+            margin-bottom: 20px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.1);
+            backdrop-filter: blur(10px);
+        }
+        .status-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        .status-card {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            color: white;
+            padding: 20px;
+            border-radius: 12px;
+            text-align: center;
+        }
+        .status-card.active {
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+        }
+        .status-card.warning {
+            background: linear-gradient(135deg, #fa709a 0%, #fee140 100%);
+        }
+        .status-value {
+            font-size: 2.5em;
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+        .status-label {
+            font-size: 1.1em;
+            opacity: 0.9;
+        }
+        .btn {
+            display: inline-block;
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            font-size: 1em;
+            font-weight: bold;
+            text-decoration: none;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            margin: 5px;
+        }
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+        .btn-success {
+            background: linear-gradient(135deg, #56ab2f 0%, #a8e6cf 100%);
+            color: white;
+        }
+        .btn-danger {
+            background: linear-gradient(135deg, #ff416c 0%, #ff4b2b 100%);
+            color: white;
+        }
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+        }
+        .terminal-preview {
+            background: #1e1e1e;
+            color: #00ff00;
+            padding: 20px;
+            border-radius: 10px;
+            font-family: 'Courier New', monospace;
+            margin: 20px 0;
+        }
+        .feature-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+        }
+        .feature-card {
+            background: rgba(255,255,255,0.8);
+            padding: 20px;
+            border-radius: 10px;
+            border-left: 4px solid #667eea;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 15px 0;
+        }
+        th, td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+        th {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+        .nav {
+            margin: 20px 0;
+        }
+        .nav a {
+            color: #667eea;
+            text-decoration: none;
+            margin-right: 20px;
+            font-weight: bold;
+        }
+        .footer {
+            text-align: center;
+            margin-top: 40px;
+            opacity: 0.7;
+        }
     </style>
     <script>
-        function toggleService(action) {
-            fetch('/plugins/ssh/api/' + action, {method: 'POST'})
+        function toggleSSH(action) {
+            fetch(`/plugins/ssh/api/ssh/${action}`, {method: 'POST'})
                 .then(response => response.json())
                 .then(data => {
                     if (data.success) {
                         location.reload();
                     } else {
-                        alert('Operation failed');
+                        alert(`Failed to ${action} SSH service`);
                     }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    alert('Operation failed');
                 });
         }
+        
+        // Auto-refresh status every 30 seconds
+        setInterval(() => {
+            fetch('/plugins/ssh/api/ssh/status')
+                .then(response => response.json())
+                .then(data => {
+                    // Update status indicators without full page reload
+                    console.log('Status updated:', data);
+                })
+                .catch(error => console.error('Status update failed:', error));
+        }, 30000);
     </script>
 </head>
 <body>
     <div class="container">
-        <h1>🔐 SSH Management</h1>
-        
-        <div class="nav">
-            <a href="/plugins/ssh/">Dashboard</a>
-            <a href="/plugins/ssh/terminal">Web Terminal</a>
+        <div class="header">
+            <h1>🚀 SSH Web Terminal</h1>
+            <p>Advanced terminal interface for {{ pwnagotchi_name }}</p>
+            <div class="nav">
+                <a href="/plugins/ssh/">🏠 Dashboard</a>
+                <a href="/plugins/ssh/terminal">💻 Web Terminal</a>
+            </div>
         </div>
 
-        <div class="status {{ status_class }}">
-            <strong>SSH Status:</strong> {{ status_text }}
-            {% if status %}
-                <button class="button btn-danger" onclick="toggleService('stop')">Stop SSH</button>
-            {% else %}
-                <button class="button btn-success" onclick="toggleService('start')">Start SSH</button>
-            {% endif %}
+        <div class="status-grid">
+            <div class="status-card {{ 'active' if ssh_active else 'warning' }}">
+                <div class="status-value">{{ 'ON' if ssh_active else 'OFF' }}</div>
+                <div class="status-label">SSH Service</div>
+            </div>
+            <div class="status-card active">
+                <div class="status-value">{{ connection_count }}</div>
+                <div class="status-label">SSH Connections</div>
+            </div>
+            <div class="status-card">
+                <div class="status-value">{{ terminal_count }}</div>
+                <div class="status-label">Active Terminals</div>
+            </div>
         </div>
 
-        <h3>📊 Connection Status</h3>
-        <p><strong>Active Connections:</strong> {{ connection_count }}</p>
-        
+        <div class="card">
+            <h2>🔧 Service Control</h2>
+            <div style="margin: 20px 0;">
+                {% if ssh_active %}
+                    <button class="btn btn-danger" onclick="toggleSSH('stop')">🛑 Stop SSH</button>
+                {% else %}
+                    <button class="btn btn-success" onclick="toggleSSH('start')">▶️ Start SSH</button>
+                {% endif %}
+                <a href="/plugins/ssh/terminal" class="btn btn-primary">💻 Open Web Terminal</a>
+            </div>
+        </div>
+
         {% if connections %}
-        <table>
-            <thead>
-                <tr><th>Local Address</th><th>Remote Address</th><th>Time</th></tr>
-            </thead>
-            <tbody>
-                {% for conn in connections %}
-                <tr>
-                    <td>{{ conn.local }}</td>
-                    <td>{{ conn.remote }}</td>
-                    <td>{{ conn.time }}</td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
+        <div class="card">
+            <h2>🌐 Active SSH Connections</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Local Address</th>
+                        <th>Remote Address</th>
+                        <th>Connection Time</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for conn in connections %}
+                    <tr>
+                        <td>{{ conn.local }}</td>
+                        <td>{{ conn.remote }}</td>
+                        <td>{{ conn.time }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
         {% endif %}
 
-        <h3>🔧 Quick Actions</h3>
-        <button class="button btn-primary" onclick="location.href='/plugins/ssh/terminal'">Open Web Terminal</button>
-        
-        <div style="margin-top: 30px; padding: 15px; background: #e9ecef; border-radius: 4px;">
-            <h4>� Web Terminal Access</h4>
-            <p><strong>Browser Terminal:</strong> <a href="/plugins/ssh/terminal">Click here to open terminal</a></p>
-            <p><strong>Features:</strong> Full bash shell, command history, real-time output</p>
-            <p><strong>Usage:</strong> Run any Linux command directly in your browser</p>
+        <div class="card">
+            <h2>🖥️ Web Terminal Preview</h2>
+            <div class="terminal-preview">
+                pi@pwnagotchi:~$ ssh-keygen -t ed25519<br>
+                Generating public/private ed25519 key pair...<br>
+                pi@pwnagotchi:~$ systemctl status ssh<br>
+                <span style="color: #00ff00;">● ssh.service - OpenBSD Secure Shell server</span><br>
+                &nbsp;&nbsp;&nbsp;Active: <span style="color: #00ff00;">active (running)</span><br>
+                pi@pwnagotchi:~$ █
+            </div>
+            <a href="/plugins/ssh/terminal" class="btn btn-primary">🚀 Launch Full Terminal</a>
+        </div>
+
+        <div class="feature-grid">
+            <div class="feature-card">
+                <h3>⚡ Real-time Terminal</h3>
+                <p>Full bash shell with real-time input/output, command history, and tab completion support.</p>
+            </div>
+            <div class="feature-card">
+                <h3>🔒 Secure Access</h3>
+                <p>Direct access to your Pwnagotchi through secure web interface without external SSH clients.</p>
+            </div>
+            <div class="feature-card">
+                <h3>📱 Cross-platform</h3>
+                <p>Works on any device with a web browser - desktop, tablet, or mobile.</p>
+            </div>
+            <div class="feature-card">
+                <h3>🎨 Modern Interface</h3>
+                <p>Beautiful, responsive design with dark theme and terminal emulation.</p>
+            </div>
+        </div>
+
+        <div class="footer">
+            <p>SSH Web Terminal v2.0.0 - Built for Pwnagotchi Torch 🔥</p>
         </div>
     </div>
 </body>
 </html>
         """
         
-        return render_template_string(template,
+        return render_template_string(
+            template,
             pwnagotchi_name=pwnagotchi.name(),
-            status=status,
-            status_text='Active' if status else 'Inactive',
-            status_class='active' if status else 'inactive',
+            ssh_active=ssh_active,
             connections=connections,
-            connection_count=len(connections)
+            connection_count=len(connections),
+            terminal_count=active_terminals
         )
 
-    def render_terminal_page(self):
-        """Render web terminal page"""
+    def _render_terminal(self):
+        """Render terminal interface"""
         template = """
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Web Terminal - {{ pwnagotchi_name }}</title>
-    <meta charset="utf-8">
     <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
         body { 
-            font-family: monospace; 
-            margin: 0; 
-            padding: 20px; 
-            background: #f0f0f0; 
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace; 
+            background: #1a1a1a;
+            color: #fff;
+            height: 100vh;
+            overflow: hidden;
         }
-        .container { 
-            max-width: 1200px; 
-            margin: 0 auto; 
-            background: white; 
-            padding: 20px; 
-            border-radius: 8px; 
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 10px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.3);
         }
-        .nav { 
-            margin: 20px 0; 
+        .header h1 {
+            font-size: 1.5em;
+            margin: 0;
         }
-        .nav a { 
-            margin-right: 15px; 
-            text-decoration: none; 
-            color: #007bff; 
+        .controls {
+            display: flex;
+            gap: 10px;
         }
+        .btn {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 6px;
+            font-size: 0.9em;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+        .btn-primary { background: #007bff; color: white; }
+        .btn-success { background: #28a745; color: white; }
+        .btn-danger { background: #dc3545; color: white; }
+        .btn-secondary { background: #6c757d; color: white; }
+        .btn:hover { opacity: 0.8; transform: translateY(-1px); }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        
+        .status-bar {
+            background: #2a2a2a;
+            padding: 8px 20px;
+            font-size: 0.9em;
+            border-bottom: 1px solid #444;
+        }
+        .status-connected { color: #28a745; }
+        .status-disconnected { color: #dc3545; }
+        .status-connecting { color: #ffc107; }
+        
         .terminal-container {
-            background: #1e1e1e;
-            border: 1px solid #333;
-            border-radius: 4px;
-            margin: 20px 0;
-            padding: 0;
-            height: 500px;
+            height: calc(100vh - 120px);
+            background: #0d1117;
             position: relative;
         }
-        .terminal-header {
-            background: #2d2d2d;
-            color: #fff;
-            padding: 8px 15px;
-            border-bottom: 1px solid #333;
-            font-size: 12px;
-        }
-        .terminal-controls {
-            margin: 10px 0;
-        }
-        .button { 
-            padding: 8px 16px; 
-            margin: 4px; 
-            border: none; 
-            border-radius: 4px; 
-            cursor: pointer; 
-        }
-        .btn-primary { 
-            background: #007bff; 
-            color: white; 
-        }
-        .btn-danger { 
-            background: #dc3545; 
-            color: white; 
-        }
-        .btn-secondary { 
-            background: #6c757d; 
-            color: white; 
-        }
-        #terminal {
+        .terminal {
             width: 100%;
-            height: 460px;
-            padding: 15px;
-            box-sizing: border-box;
-            font-family: 'Courier New', monospace;
+            height: 100%;
+            background: #0d1117;
+            color: #58a6ff;
+            font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Roboto Mono', monospace;
             font-size: 14px;
-            background: #1e1e1e;
-            color: #00ff00;
+            line-height: 1.4;
+            padding: 20px;
             border: none;
             outline: none;
             resize: none;
             overflow-y: auto;
+            white-space: pre-wrap;
+            word-wrap: break-word;
         }
-        .status {
-            padding: 10px;
-            margin: 10px 0;
-            border-radius: 4px;
+        .terminal:focus {
+            background: #0d1117;
         }
-        .connected {
-            background: #d4edda;
-            color: #155724;
-            border: 1px solid #c3e6cb;
+        .terminal::placeholder {
+            color: #6e7681;
         }
-        .disconnected {
-            background: #f8d7da;
-            color: #721c24;
-            border: 1px solid #f5c6cb;
+        
+        .input-line {
+            background: #161b22;
+            border-top: 1px solid #30363d;
+            padding: 10px 20px;
+            display: flex;
+            align-items: center;
+        }
+        .prompt {
+            color: #7c3aed;
+            margin-right: 8px;
+            font-weight: bold;
+        }
+        .command-input {
+            flex: 1;
+            background: transparent;
+            border: none;
+            color: #f0f6fc;
+            font-family: inherit;
+            font-size: 14px;
+            outline: none;
+        }
+        
+        .nav {
+            margin-right: 20px;
+        }
+        .nav a {
+            color: rgba(255,255,255,0.8);
+            text-decoration: none;
+            margin-left: 15px;
+            font-size: 0.9em;
+        }
+        .nav a:hover {
+            color: white;
+        }
+        
+        /* Terminal animations */
+        .cursor {
+            animation: blink 1s infinite;
+        }
+        @keyframes blink {
+            0%, 50% { opacity: 1; }
+            51%, 100% { opacity: 0; }
+        }
+        
+        /* Responsive design */
+        @media (max-width: 768px) {
+            .header h1 { font-size: 1.2em; }
+            .controls { gap: 5px; }
+            .btn { padding: 6px 12px; font-size: 0.8em; }
+            .terminal { font-size: 12px; padding: 15px; }
         }
     </style>
 </head>
 <body>
-    <div class="container">
+    <div class="header">
         <h1>💻 Web Terminal</h1>
-        
-        <div class="nav">
-            <a href="/plugins/ssh/">Dashboard</a>
-            <a href="/plugins/ssh/terminal">Web Terminal</a>
-        </div>
-
-        <div id="status" class="status connected">
-            <strong>Status:</strong> Auto-connecting...
-        </div>
-
-        <div class="terminal-controls">
-            <button id="connectBtn" class="button btn-primary" style="display: none;">Connect Terminal</button>
-            <button id="disconnectBtn" class="button btn-danger" disabled>Disconnect</button>
-            <button id="clearBtn" class="button btn-secondary" disabled>Clear</button>
-        </div>
-
-        <div class="terminal-container">
-            <div class="terminal-header">
-                Web Terminal - Type commands and press Enter
+        <div style="display: flex; align-items: center;">
+            <div class="nav">
+                <a href="/plugins/ssh/">🏠 Dashboard</a>
             </div>
-            <textarea id="terminal" placeholder="Terminal connecting automatically..." readonly></textarea>
+            <div class="controls">
+                <button id="connectBtn" class="btn btn-success">🔌 Connect</button>
+                <button id="disconnectBtn" class="btn btn-danger" disabled>🔌 Disconnect</button>
+                <button id="clearBtn" class="btn btn-secondary" disabled>🗑️ Clear</button>
+                <button id="fullscreenBtn" class="btn btn-primary">🔍 Fullscreen</button>
+            </div>
         </div>
-
-        <div style="margin-top: 20px; padding: 15px; background: #e9ecef; border-radius: 4px;">
-            <h4>📋 Terminal Info</h4>
-            <p><strong>Shell:</strong> /bin/bash</p>
-            <p><strong>Features:</strong> Command history, tab completion, colors</p>
-            <p><strong>Tips:</strong> Use 'clear' to clear screen, 'exit' to close session</p>
-        </div>
+    </div>
+    
+    <div class="status-bar">
+        <span id="status" class="status-disconnected">● Disconnected</span>
+        <span id="sessionInfo" style="margin-left: 20px;"></span>
+    </div>
+    
+    <div class="terminal-container">
+        <textarea id="terminal" class="terminal" placeholder="Click Connect to start terminal session..." readonly></textarea>
+    </div>
+    
+    <div class="input-line">
+        <span class="prompt" id="prompt">$</span>
+        <input type="text" id="commandInput" class="command-input" placeholder="Type commands here..." disabled>
     </div>
 
     <script>
-        let terminalId = null;
-        let connected = false;
-        let pollInterval = null;
-        
-        const terminal = document.getElementById('terminal');
-        const status = document.getElementById('status');
-        const connectBtn = document.getElementById('connectBtn');
-        const disconnectBtn = document.getElementById('disconnectBtn');
-        const clearBtn = document.getElementById('clearBtn');
-        
-        // Connect to terminal
-        connectBtn.addEventListener('click', async () => {
-            try {
-                console.log('Attempting to connect to terminal...');
-                updateStatus('Connecting...', false);
-                const response = await fetch('/plugins/ssh/api/terminal/create', {
-                    method: 'POST'
-                });
+        class WebTerminal {
+            constructor() {
+                this.sessionId = null;
+                this.connected = false;
+                this.pollInterval = null;
+                this.commandHistory = [];
+                this.historyIndex = -1;
                 
-                console.log('Response received:', response.status, response.statusText);
+                this.terminal = document.getElementById('terminal');
+                this.commandInput = document.getElementById('commandInput');
+                this.status = document.getElementById('status');
+                this.sessionInfo = document.getElementById('sessionInfo');
                 
-                if (!response.ok) {
-                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-                }
+                this.connectBtn = document.getElementById('connectBtn');
+                this.disconnectBtn = document.getElementById('disconnectBtn');
+                this.clearBtn = document.getElementById('clearBtn');
+                this.fullscreenBtn = document.getElementById('fullscreenBtn');
                 
-                const data = await response.json();
-                console.log('Response data:', data);
-                
-                if (data.success && data.terminal_id) {
-                    console.log('Terminal created successfully:', data.terminal_id);
-                    terminalId = data.terminal_id;
-                    connected = true;
-                    updateStatus('Connected', true);
-                    enableControls();
-                    startPolling();
-                    terminal.value = 'Terminal connected. Type commands below:\\n\\n';
-                    terminal.focus();
-                } else {
-                    const errorMsg = data.message || 'Failed to create terminal session';
-                    console.error('Terminal creation failed:', errorMsg, data);
-                    updateStatus(`Connection failed: ${errorMsg}`, false);
-                }
-            } catch (error) {
-                const errorMsg = `Error connecting to terminal: ${error.message}`;
-                console.error('Connection error:', error);
-                updateStatus(errorMsg, false);
+                this.initializeEventListeners();
             }
-        });
-        
-        // Disconnect terminal
-        disconnectBtn.addEventListener('click', async () => {
-            if (terminalId) {
-                try {
-                    await fetch(`/plugins/ssh/api/terminal/${terminalId}/close`, {
-                        method: 'POST'
-                    });
-                } catch (error) {
-                    console.error('Error closing terminal:', error);
-                }
-            }
-            disconnect();
-        });
-        
-        // Clear terminal
-        clearBtn.addEventListener('click', () => {
-            terminal.value = '';
-        });
-        
-        // Handle keyboard input
-        terminal.addEventListener('keydown', async (e) => {
-            if (!connected || !terminalId) return;
             
-            if (e.key === 'Enter') {
-                e.preventDefault();
-                const lines = terminal.value.split('\\n');
-                const currentLine = lines[lines.length - 1];
+            initializeEventListeners() {
+                this.connectBtn.addEventListener('click', () => this.connect());
+                this.disconnectBtn.addEventListener('click', () => this.disconnect());
+                this.clearBtn.addEventListener('click', () => this.clearTerminal());
+                this.fullscreenBtn.addEventListener('click', () => this.toggleFullscreen());
                 
-                // Send the current line as input
+                this.commandInput.addEventListener('keydown', (e) => this.handleKeyDown(e));
+                this.commandInput.addEventListener('keyup', (e) => this.handleKeyUp(e));
+                
+                // Auto-resize handling
+                window.addEventListener('resize', () => this.handleResize());
+                
+                // Focus management
+                this.terminal.addEventListener('click', () => this.commandInput.focus());
+                
+                // Auto-connect on load
+                setTimeout(() => this.connect(), 1000);
+            }
+            
+            async connect() {
                 try {
-                    await fetch(`/plugins/ssh/api/terminal/${terminalId}/input`, {
+                    this.updateStatus('Connecting...', 'connecting');
+                    this.connectBtn.disabled = true;
+                    
+                    const response = await fetch('/plugins/ssh/api/terminal/create', {
                         method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json'
-                        },
-                        body: JSON.stringify({
-                            input: currentLine + '\\n'
-                        })
+                        headers: { 'Content-Type': 'application/json' }
+                    });
+                    
+                    if (!response.ok) {
+                        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                    }
+                    
+                    const data = await response.json();
+                    
+                    if (data.success && data.session_id) {
+                        this.sessionId = data.session_id;
+                        this.connected = true;
+                        this.updateStatus('Connected', 'connected');
+                        this.sessionInfo.textContent = `Session: ${this.sessionId}`;
+                        this.enableControls();
+                        this.startPolling();
+                        this.terminal.value = `Welcome to Pwnagotchi Web Terminal\\n`;
+                        this.terminal.value += `Session ID: ${this.sessionId}\\n`;
+                        this.terminal.value += `Type 'help' for available commands\\n\\n`;
+                        this.commandInput.focus();
+                        
+                        // Load command history
+                        this.loadCommandHistory();
+                    } else {
+                        throw new Error(data.message || 'Failed to create terminal session');
+                    }
+                } catch (error) {
+                    console.error('Connection error:', error);
+                    this.updateStatus(`Error: ${error.message}`, 'disconnected');
+                    this.connectBtn.disabled = false;
+                }
+            }
+            
+            async disconnect() {
+                if (this.sessionId) {
+                    try {
+                        await fetch(`/plugins/ssh/api/terminal/${this.sessionId}/close`, {
+                            method: 'POST'
+                        });
+                    } catch (error) {
+                        console.error('Error closing session:', error);
+                    }
+                }
+                
+                this.connected = false;
+                this.sessionId = null;
+                this.updateStatus('Disconnected', 'disconnected');
+                this.sessionInfo.textContent = '';
+                this.disableControls();
+                this.stopPolling();
+            }
+            
+            clearTerminal() {
+                this.terminal.value = '';
+                this.commandInput.focus();
+            }
+            
+            toggleFullscreen() {
+                if (!document.fullscreenElement) {
+                    document.documentElement.requestFullscreen();
+                    this.fullscreenBtn.textContent = '🔍 Exit Fullscreen';
+                } else {
+                    document.exitFullscreen();
+                    this.fullscreenBtn.textContent = '🔍 Fullscreen';
+                }
+            }
+            
+            async handleKeyDown(e) {
+                if (!this.connected || !this.sessionId) return;
+                
+                switch (e.key) {
+                    case 'Enter':
+                        e.preventDefault();
+                        await this.executeCommand();
+                        break;
+                    case 'ArrowUp':
+                        e.preventDefault();
+                        this.navigateHistory(-1);
+                        break;
+                    case 'ArrowDown':
+                        e.preventDefault();
+                        this.navigateHistory(1);
+                        break;
+                    case 'Tab':
+                        e.preventDefault();
+                        // TODO: Implement tab completion
+                        break;
+                    case 'c':
+                        if (e.ctrlKey) {
+                            e.preventDefault();
+                            await this.sendInput('\\x03'); // Ctrl+C
+                        }
+                        break;
+                }
+            }
+            
+            handleKeyUp(e) {
+                // Update prompt based on input
+                const input = this.commandInput.value;
+                if (input.length > 0) {
+                    document.getElementById('prompt').textContent = '>';
+                } else {
+                    document.getElementById('prompt').textContent = '$';
+                }
+            }
+            
+            async executeCommand() {
+                const command = this.commandInput.value.trim();
+                if (!command) return;
+                
+                // Add to history
+                if (command !== this.commandHistory[this.commandHistory.length - 1]) {
+                    this.commandHistory.push(command);
+                    if (this.commandHistory.length > 100) {
+                        this.commandHistory.shift();
+                    }
+                }
+                this.historyIndex = this.commandHistory.length;
+                
+                // Display command in terminal
+                this.terminal.value += `$ ${command}\\n`;
+                
+                // Send to backend
+                await this.sendInput(command + '\\n');
+                
+                // Clear input
+                this.commandInput.value = '';
+                document.getElementById('prompt').textContent = '$';
+            }
+            
+            async sendInput(input) {
+                if (!this.connected || !this.sessionId) return;
+                
+                try {
+                    await fetch(`/plugins/ssh/api/terminal/${this.sessionId}/input`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ input: input })
                     });
                 } catch (error) {
                     console.error('Error sending input:', error);
                 }
             }
-        });
-        
-        // Poll for output
-        async function pollOutput() {
-            if (!connected || !terminalId) return;
             
-            try {
-                const response = await fetch(`/plugins/ssh/api/terminal/${terminalId}/output`);
-                const data = await response.json();
+            async pollOutput() {
+                if (!this.connected || !this.sessionId) return;
                 
-                if (data.output) {
-                    terminal.value += data.output;
-                    terminal.scrollTop = terminal.scrollHeight;
+                try {
+                    const response = await fetch(`/plugins/ssh/api/terminal/${this.sessionId}/output`);
+                    const data = await response.json();
+                    
+                    if (data.output) {
+                        this.terminal.value += data.output;
+                        this.terminal.scrollTop = this.terminal.scrollHeight;
+                    }
+                    
+                    if (!data.active) {
+                        this.disconnect();
+                    }
+                } catch (error) {
+                    console.error('Polling error:', error);
+                    this.disconnect();
                 }
-            } catch (error) {
-                console.error('Error polling output:', error);
-                disconnect();
             }
-        }
-        
-        function startPolling() {
-            pollInterval = setInterval(pollOutput, 100); // Poll every 100ms
-        }
-        
-        function stopPolling() {
-            if (pollInterval) {
-                clearInterval(pollInterval);
-                pollInterval = null;
-            }
-        }
-        
-        function updateStatus(text, isConnected) {
-            status.innerHTML = `<strong>Status:</strong> ${text}`;
-            status.className = `status ${isConnected ? 'connected' : 'disconnected'}`;
-        }
-        
-        function enableControls() {
-            connectBtn.disabled = true;
-            disconnectBtn.disabled = false;
-            clearBtn.disabled = false;
-            terminal.readOnly = false;
-        }
-        
-        function disableControls() {
-            connectBtn.disabled = false;
-            disconnectBtn.disabled = true;
-            clearBtn.disabled = true;
-            terminal.readOnly = true;
-        }
-        
-        function disconnect() {
-            connected = false;
-            terminalId = null;
-            updateStatus('Disconnected', false);
-            disableControls();
-            stopPolling();
-        }
-        
-        // Auto-resize terminal
-        window.addEventListener('resize', () => {
-            if (connected && terminalId) {
-                const rows = Math.floor(terminal.clientHeight / 20);
-                const cols = Math.floor(terminal.clientWidth / 8);
+            
+            async loadCommandHistory() {
+                if (!this.sessionId) return;
                 
-                fetch(`/plugins/ssh/api/terminal/${terminalId}/resize`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({
-                        rows: rows,
-                        cols: cols
-                    })
-                }).catch(console.error);
+                try {
+                    const response = await fetch(`/plugins/ssh/api/terminal/${this.sessionId}/history`);
+                    const data = await response.json();
+                    
+                    if (data.success) {
+                        this.commandHistory = data.history || [];
+                        this.historyIndex = this.commandHistory.length;
+                    }
+                } catch (error) {
+                    console.error('Error loading history:', error);
+                }
             }
+            
+            navigateHistory(direction) {
+                if (this.commandHistory.length === 0) return;
+                
+                this.historyIndex += direction;
+                
+                if (this.historyIndex < 0) {
+                    this.historyIndex = 0;
+                } else if (this.historyIndex >= this.commandHistory.length) {
+                    this.historyIndex = this.commandHistory.length;
+                    this.commandInput.value = '';
+                    return;
+                }
+                
+                this.commandInput.value = this.commandHistory[this.historyIndex] || '';
+            }
+            
+            startPolling() {
+                this.pollInterval = setInterval(() => this.pollOutput(), 200);
+            }
+            
+            stopPolling() {
+                if (this.pollInterval) {
+                    clearInterval(this.pollInterval);
+                    this.pollInterval = null;
+                }
+            }
+            
+            updateStatus(text, type) {
+                this.status.textContent = `● ${text}`;
+                this.status.className = `status-${type}`;
+            }
+            
+            enableControls() {
+                this.connectBtn.disabled = true;
+                this.disconnectBtn.disabled = false;
+                this.clearBtn.disabled = false;
+                this.commandInput.disabled = false;
+            }
+            
+            disableControls() {
+                this.connectBtn.disabled = false;
+                this.disconnectBtn.disabled = true;
+                this.clearBtn.disabled = true;
+                this.commandInput.disabled = true;
+            }
+            
+            async handleResize() {
+                if (!this.connected || !this.sessionId) return;
+                
+                const rows = Math.floor(this.terminal.clientHeight / 20);
+                const cols = Math.floor(this.terminal.clientWidth / 8);
+                
+                try {
+                    await fetch(`/plugins/ssh/api/terminal/${this.sessionId}/resize`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ rows, cols })
+                    });
+                } catch (error) {
+                    console.error('Resize error:', error);
+                }
+            }
+        }
+        
+        // Initialize terminal when page loads
+        window.addEventListener('load', () => {
+            window.webTerminal = new WebTerminal();
         });
         
-        // Auto-connect when page loads
-        window.addEventListener('load', () => {
-            connectBtn.click();
+        // Handle fullscreen changes
+        document.addEventListener('fullscreenchange', () => {
+            const btn = document.getElementById('fullscreenBtn');
+            if (document.fullscreenElement) {
+                btn.textContent = '🔍 Exit Fullscreen';
+            } else {
+                btn.textContent = '🔍 Fullscreen';
+            }
         });
     </script>
 </body>

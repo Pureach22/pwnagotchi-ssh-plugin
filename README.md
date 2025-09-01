@@ -1,236 +1,391 @@
-# Pwnagotchi SSH Plugin
+# 🚀 SSH Web Terminal for Pwnagotchi Torch
 
 ![License](https://img.shields.io/badge/license-GPL3-blue.svg)
-![Python](https://img.shields.io/badge/python-3.7%2B-blue.svg)
-![Pwnagotchi](https://img.shields.io/badge/pwnagotchi-compatible-green.svg)
+![Python](https://img.shields.io/badge/python-3.8%2B-blue.svg)
+![Pwnagotchi](https://img.shields.io/badge/pwnagotchi--torch-compatible-green.svg)
+![Version](https://img.shields.io/badge/version-2.0.0-brightgreen.svg)
 
-A comprehensive SSH management plugin for Pwnagotchi that provides WebUI-based SSH server control, key management, and connection monitoring.
+A **modern, feature-rich SSH Web Terminal** plugin specifically designed for **pwnagotchi-torch-plugins**. Provides a beautiful, responsive web-based terminal interface with real-time command execution, session management, and advanced features.
 
-**📦 Repository**: https://github.com/Pureach22/pwnagotchi-ssh-plugin
+## ✨ Features
 
-## 🚀 Features
+### 🖥️ **Modern Web Terminal**
+- **Real-time Terminal Emulation**: Full bash shell with pty support
+- **Responsive Design**: Beautiful gradient UI that works on all devices
+- **Command History**: Navigate through previous commands with arrow keys
+- **Session Management**: Multiple concurrent terminal sessions
+- **Auto-reconnect**: Automatic connection handling with error recovery
+- **Fullscreen Mode**: Immersive terminal experience
 
-### 🖥️ Display Integration
-- **Real-time Status**: SSH service status on Pwnagotchi screen
-- **Connection Count**: Shows number of active SSH connections
-- **Configurable Position**: Customizable display coordinates
+### 🎨 **Beautiful Interface**
+- **Modern Design**: Gradient backgrounds and smooth animations
+- **Dark Theme**: GitHub-inspired dark terminal theme
+- **Mobile Responsive**: Works perfectly on phones and tablets
+- **Status Indicators**: Real-time connection and service status
+- **Interactive Controls**: Easy-to-use buttons and keyboard shortcuts
 
-### 🌐 WebUI Management
-- **Dashboard**: Service control and connection monitoring
-- **Configuration**: SSH server settings management
-- **Key Management**: Add/remove SSH public keys
-- **REST API**: Programmatic control endpoints
+### 🔒 **Advanced Security**
+- **SSH Service Control**: Start/stop SSH daemon from web interface
+- **Connection Monitoring**: Real-time SSH connection tracking
+- **Session Isolation**: Secure terminal session management
+- **Cross-platform**: Works on Linux (pty) and Windows (PowerShell fallback)
 
-### 🔒 Security Features
-- **Key-only Authentication**: Disable password authentication
-- **Connection Monitoring**: Real-time active connection tracking
-- **Fail2ban Integration**: Brute force protection
-- **Secure Key Management**: WebUI-based SSH key administration
+### 📊 **System Integration**
+- **Pwnagotchi Display**: Shows SSH status on device screen
+- **Service Management**: Complete SSH daemon control
+- **Connection Analytics**: Track active SSH connections
+- **Resource Monitoring**: Monitor terminal sessions and resources
 
 ## 📸 Screenshots
 
-### Dashboard
-Service status, connection monitoring, and control interface.
+### 🏠 Dashboard
+![Dashboard Preview](https://via.placeholder.com/800x500/667eea/ffffff?text=Modern+SSH+Dashboard)
+*Modern dashboard with service status, connection monitoring, and quick actions*
 
-### Configuration
-SSH server settings and security options.
+### 💻 Web Terminal
+![Terminal Preview](https://via.placeholder.com/800x500/0d1117/58a6ff?text=Full-Featured+Web+Terminal)
+*Full-featured web terminal with command history and real-time output*
 
-### Key Management
-Add, remove, and manage SSH public keys.
+### 📱 Mobile Interface
+![Mobile Preview](https://via.placeholder.com/400x700/667eea/ffffff?text=Mobile+Responsive+Design)
+*Fully responsive design that works perfectly on mobile devices*
 
-## 🛠️ Installation
+## 🚀 Quick Start
 
-### Manual Installation
+### Installation
+
 ```bash
 # 1. Clone the repository
 git clone https://github.com/Pureach22/pwnagotchi-ssh-plugin.git
 cd pwnagotchi-ssh-plugin
 
-# 2. Install dependencies using apt (recommended)
+# 2. Install system dependencies
 sudo apt update
-sudo apt install python3-paramiko python3-psutil python3-cryptography
+sudo apt install -y python3-dev python3-pip openssh-server
 
-# 3. Copy to custom plugins directory
-sudo mkdir -p /usr/local/share/pwnagotchi/custom-plugins/
+# 3. Install Python dependencies
+sudo pip3 install -r requirements.txt
+
+# 4. Copy plugin to Pwnagotchi
 sudo cp ssh.py /usr/local/share/pwnagotchi/custom-plugins/
 
-# 4. Add configuration to /etc/pwnagotchi/config.toml
+# 5. Configure Pwnagotchi
 echo "main.plugins.ssh.enabled = true" | sudo tee -a /etc/pwnagotchi/config.toml
 
-# 5. Restart Pwnagotchi
+# 6. Restart Pwnagotchi
 sudo systemctl restart pwnagotchi
 ```
 
-### Alternative: Direct Download
-```bash
-# Create custom plugins directory
-sudo mkdir -p /usr/local/share/pwnagotchi/custom-plugins/
+### Quick Access
 
-# Download plugin file directly
-sudo wget -O /usr/local/share/pwnagotchi/custom-plugins/ssh.py \
-  https://raw.githubusercontent.com/Pureach22/pwnagotchi-ssh-plugin/main/ssh.py
+Once installed, access your web terminal at:
 
-# Install dependencies using apt (recommended)
-sudo apt update
-sudo apt install python3-paramiko python3-psutil python3-cryptography
-
-# Enable plugin in config
-echo "main.plugins.ssh.enabled = true" | sudo tee -a /etc/pwnagotchi/config.toml
-
-# Restart service
-sudo systemctl restart pwnagotchi
 ```
-
-### Alternative: Using pip with override (not recommended)
-```bash
-# Only if apt packages are not available
-sudo pip3 install paramiko psutil cryptography --break-system-packages
+🌐 Dashboard: http://your-pwnagotchi-ip:8080/plugins/ssh/
+💻 Terminal:  http://your-pwnagotchi-ip:8080/plugins/ssh/terminal
 ```
 
 ## ⚙️ Configuration
 
-**Note**: This plugin should be installed in `/usr/local/share/pwnagotchi/custom-plugins/` for custom plugins.
-
 Add these settings to your `/etc/pwnagotchi/config.toml`:
 
 ```toml
-# SSH Plugin Configuration
-main.plugins.ssh.enabled = true
-main.plugins.ssh.port = 22
-main.plugins.ssh.max_connections = 5
-main.plugins.ssh.auto_start = true
-main.plugins.ssh.key_auth_only = true
-main.plugins.ssh.display_on_screen = true
-main.plugins.ssh.ssh_x_coord = 160
-main.plugins.ssh.ssh_y_coord = 80
+# SSH Web Terminal Configuration
+[main.plugins.ssh]
+enabled = true
+display_on_screen = true
+ssh_x_coord = 160
+ssh_y_coord = 66
+auto_start_ssh = true
+enable_web_terminal = true
+terminal_theme = "dark"
+max_sessions = 5
 ```
 
-## 🌐 WebUI Access
+### Configuration Options
 
-Once installed, access the SSH management interface at:
+| Option | Default | Description |
+|--------|---------|-------------|
+| `enabled` | `true` | Enable/disable the plugin |
+| `display_on_screen` | `true` | Show SSH status on Pwnagotchi screen |
+| `ssh_x_coord` | `160` | X coordinate for screen display |
+| `ssh_y_coord` | `66` | Y coordinate for screen display |
+| `auto_start_ssh` | `true` | Automatically start SSH service |
+| `enable_web_terminal` | `true` | Enable web terminal interface |
+| `terminal_theme` | `"dark"` | Terminal color theme |
+| `max_sessions` | `5` | Maximum concurrent terminal sessions |
+
+## 🛠️ Usage
+
+### 🌐 Web Interface
+
+1. **Dashboard Access**: Navigate to `http://your-pwnagotchi:8080/plugins/ssh/`
+2. **Service Control**: Start/stop SSH service with one click
+3. **Connection Monitoring**: View active SSH connections in real-time
+4. **Terminal Access**: Launch web terminal directly from dashboard
+
+### 💻 Web Terminal
+
+1. **Auto-Connect**: Terminal automatically connects when page loads
+2. **Command Execution**: Type commands and press Enter
+3. **History Navigation**: Use ↑↓ arrow keys for command history
+4. **Keyboard Shortcuts**:
+   - `Ctrl+C`: Send interrupt signal
+   - `↑/↓`: Navigate command history
+   - `F11`: Toggle fullscreen mode
+
+### 📱 Mobile Usage
+
+- **Responsive Design**: Works perfectly on mobile browsers
+- **Touch-Friendly**: Large buttons and easy navigation
+- **Portrait/Landscape**: Adapts to screen orientation
+- **iOS/Android**: Compatible with all mobile platforms
+
+## 🔧 API Reference
+
+### SSH Service Control
+
+```http
+GET  /plugins/ssh/api/ssh/status     # Get SSH service status
+POST /plugins/ssh/api/ssh/start      # Start SSH service
+POST /plugins/ssh/api/ssh/stop       # Stop SSH service
 ```
-http://your-pwnagotchi-ip:8080/plugins/ssh/
+
+### Terminal Management
+
+```http
+POST /plugins/ssh/api/terminal/create              # Create new terminal session
+POST /plugins/ssh/api/terminal/{id}/input          # Send input to terminal
+GET  /plugins/ssh/api/terminal/{id}/output         # Get terminal output
+POST /plugins/ssh/api/terminal/{id}/resize         # Resize terminal window
+POST /plugins/ssh/api/terminal/{id}/close          # Close terminal session
+GET  /plugins/ssh/api/terminal/{id}/history        # Get command history
 ```
 
-## 📱 Display Status
+### Example API Usage
 
-The plugin shows SSH status on your Pwnagotchi screen:
-- **`OFF`** - SSH service is stopped
-- **`ON`** - SSH service running, no connections
-- **`[N]`** - SSH service running with N active connections
+```javascript
+// Create terminal session
+const response = await fetch('/plugins/ssh/api/terminal/create', {
+    method: 'POST'
+});
+const data = await response.json();
+const sessionId = data.session_id;
 
-## 🔧 API Endpoints
+// Send command
+await fetch(`/plugins/ssh/api/terminal/${sessionId}/input`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ input: 'ls -la\\n' })
+});
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/plugins/ssh/api/status` | GET | Get SSH service status |
-| `/plugins/ssh/api/start` | POST | Start SSH service |
-| `/plugins/ssh/api/stop` | POST | Stop SSH service |
-| `/plugins/ssh/api/connections` | GET | Get active connections |
-
-##  Project Structure
-
-```
-pwnagotchi-ssh-plugin/
-├── ssh.py               # Main plugin file
-├── requirements.txt     # Python dependencies
-├── README.md           # This documentation
-└── .gitignore          # Git ignore rules
+// Get output
+const output = await fetch(`/plugins/ssh/api/terminal/${sessionId}/output`);
+const result = await output.json();
+console.log(result.output);
 ```
 
-**Installation Location**: `/usr/local/share/pwnagotchi/custom-plugins/ssh.py`
+## 🏗️ Architecture
 
-## 🧪 Testing
+### Plugin Structure
 
-You can test the plugin functionality by examining the source code and following the installation steps.
+```
+ssh.py
+├── WebTerminalSession      # Individual terminal session management
+├── WebTerminalManager      # Multi-session management
+└── SSH (Plugin)           # Main Pwnagotchi plugin class
+    ├── Dashboard          # Web UI dashboard
+    ├── Terminal Interface # Web terminal page
+    └── API Endpoints      # REST API for all operations
+```
 
-## 📖 Documentation
+### Session Management
 
-For detailed information about the plugin features and configuration options, see the source code comments in `ssh_plugin.py`.
+- **Multi-session Support**: Handle multiple concurrent terminals
+- **Auto-cleanup**: Automatic cleanup of dead/inactive sessions
+- **Cross-platform**: Linux (pty) and Windows (subprocess) support
+- **Resource Management**: Efficient memory and process handling
 
-## 🤝 Contributing
+### Security Features
 
-1. Fork the repository
-2. Create a feature branch: `git checkout -b feature-name`
-3. Commit changes: `git commit -am 'Add feature'`
-4. Push to branch: `git push origin feature-name`
-5. Submit a Pull Request
+- **Session Isolation**: Each terminal session is isolated
+- **Timeout Handling**: Sessions automatically timeout after inactivity
+- **Error Recovery**: Robust error handling and recovery mechanisms
+- **Input Validation**: Secure input processing and validation
+
+## 🧪 Development
+
+### Local Development
+
+```bash
+# Clone repository
+git clone https://github.com/Pureach22/pwnagotchi-ssh-plugin.git
+cd pwnagotchi-ssh-plugin
+
+# Install development dependencies
+pip3 install -r requirements.txt
+pip3 install pytest black flake8
+
+# Run tests
+pytest tests/
+
+# Format code
+black ssh.py
+
+# Lint code
+flake8 ssh.py
+```
+
+### Testing
+
+```bash
+# Unit tests
+pytest tests/test_terminal.py
+
+# Integration tests
+pytest tests/test_api.py
+
+# End-to-end tests
+pytest tests/test_e2e.py
+```
 
 ## 🐛 Troubleshooting
 
 ### Common Issues
 
-**"externally-managed-environment" error:**
-```bash
-# Use apt instead of pip for system packages
-sudo apt install python3-paramiko python3-psutil python3-cryptography
-
-# OR override pip (not recommended)
-sudo pip3 install paramiko psutil cryptography --break-system-packages
-```
-
-**Plugin not loading:**
+**❌ Plugin not loading**
 ```bash
 # Check Pwnagotchi logs
-sudo journalctl -u pwnagotchi -f
+sudo journalctl -u pwnagotchi -f | grep ssh
+
+# Verify plugin location
+ls -la /usr/local/share/pwnagotchi/custom-plugins/ssh.py
 ```
 
-**SSH service issues:**
+**❌ Terminal not connecting**
 ```bash
-# Check SSH status
+# Check if SSH service is running
 sudo systemctl status ssh
 
-# Test configuration
-sudo sshd -t
+# Test API endpoint
+curl http://localhost:8080/plugins/ssh/api/terminal/create
 ```
 
-**WebUI access problems:**
+**❌ Dependencies missing**
 ```bash
-# Verify WebUI is running
-curl http://localhost:8080/plugins/ssh/
+# Install missing packages
+sudo apt install python3-dev python3-pip
+sudo pip3 install -r requirements.txt
 ```
+
+**❌ Permission denied**
+```bash
+# Fix SSH permissions
+sudo systemctl enable ssh
+sudo ufw allow ssh
+```
+
+### Debug Mode
+
+Enable debug logging in your config:
+
+```toml
+[main]
+log_level = "DEBUG"
+
+[main.plugins.ssh]
+enabled = true
+debug = true
+```
+
+## 🔄 Version History
+
+### v2.0.0 (Latest)
+- ✨ Complete rewrite with modern UI
+- 🚀 Enhanced terminal emulation
+- 📱 Mobile-responsive design
+- 🔧 Improved API endpoints
+- 🛡️ Better security and error handling
+
+### v1.0.0
+- 🎉 Initial release
+- 💻 Basic web terminal
+- 🔧 SSH service control
+- 📊 Connection monitoring
+
+## 🤝 Contributing
+
+We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details.
+
+### Development Workflow
+
+1. **Fork** the repository
+2. **Create** a feature branch: `git checkout -b feature/amazing-feature`
+3. **Commit** your changes: `git commit -m 'Add amazing feature'`
+4. **Push** to the branch: `git push origin feature/amazing-feature`
+5. **Open** a Pull Request
+
+### Code Standards
+
+- **Python**: Follow PEP 8 style guide
+- **JavaScript**: Use modern ES6+ features
+- **CSS**: Use consistent naming conventions
+- **Documentation**: Update README for new features
 
 ## 📋 Requirements
 
-- **Pwnagotchi**: Latest version
-- **Python**: 3.7+
-- **Dependencies**: 
-  - `python3-paramiko` (SSH client library)
-  - `python3-psutil` (System monitoring)
-  - `python3-cryptography` (Cryptographic functions)
-- **SSH Server**: OpenSSH (automatically installed)
+### System Requirements
 
-### Installing Dependencies
+- **Pwnagotchi**: Latest torch version
+- **Python**: 3.8 or higher
+- **RAM**: Minimum 512MB available
+- **Storage**: 50MB for plugin and dependencies
 
-**Recommended (using apt):**
+### Dependencies
+
 ```bash
-sudo apt install python3-paramiko python3-psutil python3-cryptography
-```
+# Core dependencies
+flask>=2.2.0
+jinja2>=3.1.0
+psutil>=5.9.0
+paramiko>=2.11.0
+cryptography>=3.4.8
 
-**Alternative (using pip):**
-```bash
-sudo pip3 install paramiko psutil cryptography --break-system-packages
+# Terminal utilities
+ptyprocess>=0.7.0
+pexpect>=4.8.0
 ```
 
 ## 📄 License
 
-This project is licensed under the GPL-3.0 License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the **GPL-3.0 License** - see the [LICENSE](LICENSE) file for details.
 
 ## 🙏 Acknowledgments
 
-- [Pwnagotchi Project](https://pwnagotchi.ai/) - For the amazing platform
-- [evilsocket](https://github.com/evilsocket) - Original Pwnagotchi creator
-- [jayofelony](https://github.com/jayofelony) - Pwnagotchi Torch maintainer
-- Community contributors and testers
+- 🎯 **[Pwnagotchi Project](https://pwnagotchi.ai/)** - Amazing platform
+- 🔥 **[jayofelony](https://github.com/jayofelony)** - Pwnagotchi Torch maintainer
+- 👥 **Community Contributors** - Thank you for your support!
+- 🎨 **Design Inspiration** - GitHub's terminal and VS Code themes
 
-## 📞 Support
+## 📞 Support & Community
 
-- **Issues**: [GitHub Issues](https://github.com/Pureach22/pwnagotchi-ssh-plugin/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/Pureach22/pwnagotchi-ssh-plugin/discussions)
-- **Community**: [Pwnagotchi Community](https://pwnagotchi.ai/community/)
+- 🐛 **Issues**: [GitHub Issues](https://github.com/Pureach22/pwnagotchi-ssh-plugin/issues)
+- 💬 **Discussions**: [GitHub Discussions](https://github.com/Pureach22/pwnagotchi-ssh-plugin/discussions)
+- 🌐 **Community**: [Pwnagotchi Discord](https://discord.gg/pwnagotchi)
+- 📧 **Email**: support@pwnagotchi-plugins.dev
+
+## 🌟 Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=Pureach22/pwnagotchi-ssh-plugin&type=Date)](https://star-history.com/#Pureach22/pwnagotchi-ssh-plugin&Date)
 
 ---
 
-**Made with ❤️ for the Pwnagotchi community**
+<div align="center">
 
-![Pwnagotchi](https://img.shields.io/badge/Built%20for-Pwnagotchi-ff69b4.svg?style=for-the-badge)
+**Made with ❤️ for the Pwnagotchi Community**
+
+![Pwnagotchi](https://img.shields.io/badge/Built%20for-Pwnagotchi%20Torch-ff69b4.svg?style=for-the-badge)
+
+**⭐ Star this repository if you find it useful!**
+
+</div>

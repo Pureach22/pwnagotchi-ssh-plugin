@@ -1,0 +1,179 @@
+# SSH Web Terminal Plugin Configuration Examples
+# Copy the relevant sections to your /etc/pwnagotchi/config.toml
+
+# ========================================
+# BASIC CONFIGURATION (Recommended)
+# ========================================
+
+[main.plugins.ssh]
+enabled = true
+display_on_screen = true
+auto_start_ssh = true
+enable_web_terminal = true
+
+# ========================================
+# FULL CONFIGURATION (All Options)
+# ========================================
+
+[main.plugins.ssh]
+# Core Settings
+enabled = true                    # Enable/disable the plugin
+display_on_screen = true         # Show SSH status on Pwnagotchi screen
+ssh_x_coord = 160               # X coordinate for screen display (pixels)
+ssh_y_coord = 66                # Y coordinate for screen display (pixels)
+
+# SSH Service Settings
+auto_start_ssh = true           # Automatically start SSH service on boot
+enable_web_terminal = true      # Enable web terminal interface
+
+# Terminal Settings
+terminal_theme = "dark"         # Terminal color theme (dark/light)
+max_sessions = 5               # Maximum concurrent terminal sessions
+
+# Advanced Settings (Optional)
+connection_timeout = 30        # SSH connection timeout (seconds)
+session_timeout = 1800        # Terminal session timeout (30 minutes)
+poll_interval = 200           # Terminal output polling interval (milliseconds)
+buffer_size = 1000           # Terminal output buffer size (lines)
+
+# ========================================
+# MINIMAL CONFIGURATION
+# ========================================
+
+# For users who just want basic SSH web terminal
+[main.plugins.ssh]
+enabled = true
+
+# ========================================
+# DISPLAY-ONLY CONFIGURATION
+# ========================================
+
+# For users who only want SSH status on screen (no web terminal)
+[main.plugins.ssh]
+enabled = true
+display_on_screen = true
+enable_web_terminal = false
+ssh_x_coord = 160
+ssh_y_coord = 66
+
+# ========================================
+# HEADLESS CONFIGURATION
+# ========================================
+
+# For users who only want web terminal (no screen display)
+[main.plugins.ssh]
+enabled = true
+display_on_screen = false
+enable_web_terminal = true
+auto_start_ssh = true
+
+# ========================================
+# HIGH-SECURITY CONFIGURATION
+# ========================================
+
+# For users who want enhanced security settings
+[main.plugins.ssh]
+enabled = true
+auto_start_ssh = false          # Manual SSH service control
+max_sessions = 2               # Limit concurrent sessions
+session_timeout = 900          # 15-minute session timeout
+enable_web_terminal = true
+
+# ========================================
+# DEVELOPMENT CONFIGURATION
+# ========================================
+
+# For developers and testers
+[main.plugins.ssh]
+enabled = true
+display_on_screen = true
+enable_web_terminal = true
+max_sessions = 10              # Allow more sessions for testing
+poll_interval = 100           # Faster polling for responsiveness
+buffer_size = 2000           # Larger buffer for debug output
+
+# ========================================
+# CONFIGURATION VALIDATION
+# ========================================
+
+# Test your configuration:
+# 1. Edit /etc/pwnagotchi/config.toml
+# 2. Add your chosen configuration above
+# 3. Restart Pwnagotchi: sudo systemctl restart pwnagotchi
+# 4. Check logs: sudo journalctl -u pwnagotchi -f | grep ssh
+# 5. Access web interface: http://your-pwnagotchi-ip:8080/plugins/ssh/
+
+# ========================================
+# TROUBLESHOOTING CONFIGURATION
+# ========================================
+
+# If you're having issues, try this debug configuration:
+[main]
+log_level = "DEBUG"
+
+[main.plugins.ssh]
+enabled = true
+display_on_screen = true
+enable_web_terminal = true
+# Add other options as needed
+
+# Check logs after restart:
+# sudo journalctl -u pwnagotchi -f | grep -E "(ssh|SSH)"
+
+# ========================================
+# CUSTOM DISPLAY POSITIONS
+# ========================================
+
+# Common display positions for different screen sizes:
+
+# For 2.13" e-paper (250x122):
+[main.plugins.ssh]
+ssh_x_coord = 160
+ssh_y_coord = 66
+
+# For 2.7" e-paper (264x176):
+[main.plugins.ssh]
+ssh_x_coord = 180
+ssh_y_coord = 80
+
+# For waveshare 2.13" v2:
+[main.plugins.ssh]
+ssh_x_coord = 150
+ssh_y_coord = 60
+
+# ========================================
+# PERFORMANCE TUNING
+# ========================================
+
+# For high-traffic environments:
+[main.plugins.ssh]
+enabled = true
+max_sessions = 3               # Limit sessions to save resources
+poll_interval = 500           # Slower polling to reduce CPU usage
+buffer_size = 500            # Smaller buffer to save memory
+session_timeout = 600        # Shorter timeout (10 minutes)
+
+# For low-resource devices:
+[main.plugins.ssh]
+enabled = true
+display_on_screen = false    # Disable screen display to save resources
+max_sessions = 1            # Single session only
+poll_interval = 1000        # Very slow polling
+buffer_size = 100          # Minimal buffer
+
+# ========================================
+# NETWORK-SPECIFIC CONFIGURATION
+# ========================================
+
+# For devices behind NAT/firewall:
+[main.plugins.ssh]
+enabled = true
+auto_start_ssh = true        # Ensure SSH is always available
+enable_web_terminal = true   # Provide alternative access method
+
+# For public-facing devices (use with caution):
+[main.plugins.ssh]
+enabled = true
+max_sessions = 2            # Limit sessions for security
+session_timeout = 600       # Short timeout for security
+auto_start_ssh = false     # Manual control for security
