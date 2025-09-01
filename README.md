@@ -83,11 +83,13 @@ curl -sSL https://raw.githubusercontent.com/Pureach22/pwnagotchi-ssh-plugin/main
 ```
 
 **That's it!** The script will automatically:
-- ✅ Install all dependencies
 - ✅ Download and install the plugin
+- ✅ Install minimal Python dependencies
 - ✅ Configure Pwnagotchi
-- ✅ Start SSH service
+- ✅ Enable SSH service
 - ✅ Restart Pwnagotchi
+
+*No system packages modified - uses existing Pwnagotchi infrastructure!*
 
 ### 🔄 Alternative Installation Methods
 
@@ -120,10 +122,10 @@ cd pwnagotchi-ssh-plugin
 sudo ./install.sh
 
 # OR install manually:
-sudo apt update && sudo apt install -y python3-dev python3-pip openssh-server
-sudo pip3 install -r requirements.txt
+sudo pip3 install flask jinja2 psutil paramiko cryptography
 sudo cp ssh.py /usr/local/share/pwnagotchi/custom-plugins/
 echo "main.plugins.ssh.enabled = true" | sudo tee -a /etc/pwnagotchi/config.toml
+sudo systemctl enable ssh
 sudo systemctl restart pwnagotchi
 ```
 

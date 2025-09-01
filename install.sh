@@ -1,13 +1,24 @@
 #!/bin/bash
 
 # SSH Web Terminal Plugin Installer for Pwnagotchi Torch
-# One-command installation script inspired by pwnagotchi-torch-plugins
+# Lightweight one-command installation script
 # Version 2.0.0
 # https://github.com/Pureach22/pwnagotchi-ssh-plugin
 
 set -e
 
-# Colors for output
+    echo -e "${CYAN}🔧 Features Available:${NC}"
+    echo "   ✓ Web-based terminal with command history"
+    echo "   ✓ Multi-session support"
+    echo "   ✓ Real-time command execution"
+    echo "   ✓ Mobile-responsive interface"
+    echo "   ✓ SSH service management"
+    echo ""
+    echo -e "${CYAN}⚡ Lightweight Installation:${NC}"
+    echo "   ✓ No system packages modified"
+    echo "   ✓ Only essential Python deps installed"
+    echo "   ✓ Uses existing Pwnagotchi infrastructure"
+    echo ""s for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -90,28 +101,22 @@ check_system() {
     fi
 }
 
-# Install system dependencies
-install_system_deps() {
-    print_step "Installing system dependencies..."
+# Enable SSH service (no system dependencies needed)
+enable_ssh() {
+    print_step "Enabling SSH service..."
     
-    # Update package list quietly
-    apt update -qq
-    
-    # Install required packages
-    apt install -y curl wget python3-pip python3-dev openssh-server > /dev/null 2>&1
-    
-    # Enable SSH service
+    # Enable SSH service (assuming openssh-server is already installed)
     systemctl enable ssh > /dev/null 2>&1
     
-    print_success "System dependencies installed"
+    print_success "SSH service enabled"
 }
 
 # Install Python dependencies
 install_python_deps() {
     print_step "Installing Python dependencies..."
     
-    # Install Python packages
-    pip3 install flask jinja2 psutil paramiko cryptography ptyprocess pexpect > /dev/null 2>&1
+    # Install only the essential Python packages (most should already be available)
+    pip3 install --quiet flask jinja2 psutil paramiko cryptography > /dev/null 2>&1
     
     print_success "Python dependencies installed"
 }
@@ -240,7 +245,7 @@ main() {
     # Run installation steps
     check_root
     check_system
-    install_system_deps
+    enable_ssh
     install_python_deps
     install_plugin
     configure_plugin
