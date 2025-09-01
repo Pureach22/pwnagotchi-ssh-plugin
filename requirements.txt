@@ -1,0 +1,22 @@
+# SSH Plugin for Pwnagotchi - Dependencies
+# These are the additional packages needed beyond the standard Pwnagotchi installation
+
+# Core dependencies (usually already available in Pwnagotchi)
+flask>=2.0.0
+jinja2>=3.0.0
+
+# SSH/System monitoring utilities
+paramiko>=2.7.0
+psutil>=5.8.0
+
+# Optional: For enhanced security features
+cryptography>=3.0.0
+
+# System utilities (usually pre-installed on Pwnagotchi)
+# subprocess (built-in)
+# json (built-in)
+# os (built-in)
+# time (built-in)
+# re (built-in)
+# datetime (built-in)
+# logging (built-in)
