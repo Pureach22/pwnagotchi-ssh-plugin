@@ -49,11 +49,9 @@ cd pwnagotchi-ssh-plugin
 # 2. Install dependencies
 sudo pip3 install -r requirements.txt
 
-# 2. Install dependencies
-sudo pip3 install -r requirements.txt
-
-# 3. Copy plugin to Pwnagotchi directory
-sudo cp ssh_plugin.py /usr/local/lib/python3.*/dist-packages/pwnagotchi/plugins/default/
+# 3. Copy to custom plugins directory
+sudo mkdir -p /usr/local/share/pwnagotchi/custom-plugins/
+sudo cp ssh_plugin.py /usr/local/share/pwnagotchi/custom-plugins/
 
 # 4. Add configuration to /etc/pwnagotchi/config.toml
 echo "main.plugins.ssh.enabled = true" | sudo tee -a /etc/pwnagotchi/config.toml
@@ -62,7 +60,28 @@ echo "main.plugins.ssh.enabled = true" | sudo tee -a /etc/pwnagotchi/config.toml
 sudo systemctl restart pwnagotchi
 ```
 
+### Alternative: Direct Download
+```bash
+# Create custom plugins directory
+sudo mkdir -p /usr/local/share/pwnagotchi/custom-plugins/
+
+# Download plugin file directly
+sudo wget -O /usr/local/share/pwnagotchi/custom-plugins/ssh_plugin.py \
+  https://raw.githubusercontent.com/Pureach22/pwnagotchi-ssh-plugin/main/ssh_plugin.py
+
+# Install dependencies
+sudo pip3 install paramiko psutil cryptography
+
+# Enable plugin in config
+echo "main.plugins.ssh.enabled = true" | sudo tee -a /etc/pwnagotchi/config.toml
+
+# Restart service
+sudo systemctl restart pwnagotchi
+```
+
 ## ⚙️ Configuration
+
+**Note**: This plugin should be installed in `/usr/local/share/pwnagotchi/custom-plugins/` for custom plugins.
 
 Add these settings to your `/etc/pwnagotchi/config.toml`:
 
@@ -127,6 +146,8 @@ pwnagotchi-ssh-plugin/
 ├── README.md             # This documentation
 └── .gitignore            # Git ignore rules
 ```
+
+**Installation Location**: `/usr/local/share/pwnagotchi/custom-plugins/ssh_plugin.py`
 
 ## 🧪 Testing
 
