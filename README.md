@@ -6,6 +6,8 @@
 
 A comprehensive SSH management plugin for Pwnagotchi that provides WebUI-based SSH server control, key management, and connection monitoring.
 
+**📦 Repository**: https://github.com/Pureach22/pwnagotchi-ssh-plugin
+
 ## 🚀 Features
 
 ### 🖥️ Display Integration
@@ -36,25 +38,22 @@ SSH server settings and security options.
 ### Key Management
 Add, remove, and manage SSH public keys.
 
-## 🛠️ Quick Installation
+## 🛠️ Installation
 
-### Option 1: Automated Installation (Recommended)
+### Manual Installation
 ```bash
-# Download and run the installation script
-wget https://raw.githubusercontent.com/your-username/pwnagotchi-ssh-plugin/main/install.sh
-sudo bash install.sh
-```
+# 1. Clone the repository
+git clone https://github.com/Pureach22/pwnagotchi-ssh-plugin.git
+cd pwnagotchi-ssh-plugin
 
-### Option 2: Manual Installation
-```bash
-# 1. Download the plugin
-wget https://raw.githubusercontent.com/your-username/pwnagotchi-ssh-plugin/main/ssh_plugin.py
+# 2. Install dependencies
+sudo pip3 install -r requirements.txt
 
-# 2. Copy to plugins directory
+# 2. Install dependencies
+sudo pip3 install -r requirements.txt
+
+# 3. Copy plugin to Pwnagotchi directory
 sudo cp ssh_plugin.py /usr/local/lib/python3.*/dist-packages/pwnagotchi/plugins/default/
-
-# 3. Install dependencies
-sudo pip3 install paramiko psutil cryptography
 
 # 4. Add configuration to /etc/pwnagotchi/config.toml
 echo "main.plugins.ssh.enabled = true" | sudo tee -a /etc/pwnagotchi/config.toml
@@ -124,26 +123,18 @@ echo "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJbR... your-email@example.com" >> ~/.
 ```
 pwnagotchi-ssh-plugin/
 ├── ssh_plugin.py          # Main plugin file
-├── install.sh             # Automated installer
-├── config_example.toml    # Configuration examples
 ├── requirements.txt       # Python dependencies
-├── test_plugin.py         # Plugin validation tests
-├── INSTALLATION.md        # Detailed installation guide
-└── PROJECT_SUMMARY.md     # Complete project overview
+├── README.md             # This documentation
+└── .gitignore            # Git ignore rules
 ```
 
 ## 🧪 Testing
 
-Validate the plugin before installation:
-```bash
-python3 test_plugin.py
-```
+You can test the plugin functionality by examining the source code and following the installation steps.
 
 ## 📖 Documentation
 
-- **[Installation Guide](INSTALLATION.md)** - Detailed setup instructions
-- **[Project Summary](PROJECT_SUMMARY.md)** - Complete feature overview
-- **[Configuration Examples](config_example.toml)** - Sample configurations
+For detailed information about the plugin features and configuration options, see the source code comments in `ssh_plugin.py`.
 
 ## 🤝 Contributing
 
@@ -198,8 +189,8 @@ This project is licensed under the GPL-3.0 License - see the [LICENSE](LICENSE) 
 
 ## 📞 Support
 
-- **Issues**: [GitHub Issues](https://github.com/your-username/pwnagotchi-ssh-plugin/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/your-username/pwnagotchi-ssh-plugin/discussions)
+- **Issues**: [GitHub Issues](https://github.com/Pureach22/pwnagotchi-ssh-plugin/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/Pureach22/pwnagotchi-ssh-plugin/discussions)
 - **Community**: [Pwnagotchi Community](https://pwnagotchi.ai/community/)
 
 ---
